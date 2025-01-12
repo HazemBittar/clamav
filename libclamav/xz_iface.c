@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2013 Sourcefire, Inc.
  *
  *  Authors: Steven Morgan (smorgan@sourcefire.com)
@@ -33,14 +33,12 @@ void __xz_wrap_free(void *unused, void *freeme);
 void *__xz_wrap_alloc(void *unused, size_t size)
 {
     UNUSEDPARAM(unused);
-    if (!size || size > CLI_MAX_ALLOCATION)
-        return NULL;
+
     if (!size || size > CLI_MAX_ALLOCATION) {
-        cli_dbgmsg("xz_iface: Attempt to allocate %lu bytes exceeds CLI_MAX_ALLOCATION.\n",
-                   (unsigned long int)size);
         return NULL;
     }
-    return cli_malloc(size);
+
+    return cli_max_malloc(size);
 }
 void __xz_wrap_free(void *unused, void *freeme)
 {

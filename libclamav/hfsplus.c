@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2013 Sourcefire, Inc.
  *
  *  Authors: David Raynor <draynor@sourcefire.com>
@@ -54,7 +54,8 @@ static cl_error_t hfsplus_scanfile(cli_ctx *, hfsPlusVolumeHeader *, hfsHeaderRe
                                    hfsPlusForkData *, const char *, char **, char *);
 static cl_error_t hfsplus_validate_catalog(cli_ctx *, hfsPlusVolumeHeader *, hfsHeaderRecord *);
 static cl_error_t hfsplus_fetch_node(cli_ctx *, hfsPlusVolumeHeader *, hfsHeaderRecord *,
-                                     hfsHeaderRecord *, hfsPlusForkData *, uint32_t, uint8_t *);
+                                     hfsHeaderRecord *, hfsPlusForkData *, uint32_t, uint8_t *,
+                                     size_t);
 static cl_error_t hfsplus_walk_catalog(cli_ctx *, hfsPlusVolumeHeader *, hfsHeaderRecord *,
                                        hfsHeaderRecord *, hfsHeaderRecord *, const char *);
 
@@ -148,7 +149,7 @@ static cl_error_t hfsplus_volumeheader(cli_ctx *ctx, hfsPlusVolumeHeader **heade
         return CL_EMAP;
     }
 
-    volHeader = cli_malloc(sizeof(hfsPlusVolumeHeader));
+    volHeader = malloc(sizeof(hfsPlusVolumeHeader));
     if (!volHeader) {
         cli_errmsg("hfsplus_volumeheader: header malloc failed\n");
         return CL_EMEM;
@@ -311,7 +312,7 @@ static cl_error_t hfsplus_readheader(cli_ctx *ctx, hfsPlusVolumeHeader *volHeade
  * @param fork          Fork Data
  * @param dirname       Temp directory name
  * @param[out] filename (optional) temp file name
- * @param orig_filename (optiopnal) Original filename
+ * @param orig_filename (optional) Original filename
  * @return cl_error_t
  */
 static cl_error_t hfsplus_scanfile(cli_ctx *ctx, hfsPlusVolumeHeader *volHeader, hfsHeaderRecord *extHeader,
@@ -321,7 +322,7 @@ static cl_error_t hfsplus_scanfile(cli_ctx *ctx, hfsPlusVolumeHeader *volHeader,
     hfsPlusExtentDescriptor *currExt;
     const uint8_t *mPtr = NULL;
     char *tmpname       = NULL;
-    int ofd;
+    int ofd             = -1;
     uint64_t targetSize;
     uint32_t outputBlocks = 0;
     uint8_t ext;
@@ -343,7 +344,7 @@ static cl_error_t hfsplus_scanfile(cli_ctx *ctx, hfsPlusVolumeHeader *volHeader,
         goto done;
     }
 #endif
-    status = cli_checklimits("hfsplus_scanfile", ctx, (unsigned long)targetSize, 0, 0);
+    status = cli_checklimits("hfsplus_scanfile", ctx, targetSize, 0, 0);
     if (status != CL_SUCCESS) {
         goto done;
     }
@@ -522,7 +523,7 @@ static cl_error_t hfsplus_check_attribute(cli_ctx *ctx, hfsPlusVolumeHeader *vol
     nodeSize  = attrHeader->nodeSize;
 
     /* Need to buffer current node, map will keep moving */
-    nodeBuf = cli_malloc(nodeSize);
+    nodeBuf = cli_max_malloc(nodeSize);
     if (!nodeBuf) {
         cli_dbgmsg("hfsplus_check_attribute: failed to acquire node buffer, "
                    "size " STDu32 "\n",
@@ -546,7 +547,7 @@ static cl_error_t hfsplus_check_attribute(cli_ctx *ctx, hfsPlusVolumeHeader *vol
         }
 
         /* fetch node into buffer */
-        status = hfsplus_fetch_node(ctx, volHeader, attrHeader, NULL, &(volHeader->attributesFile), thisNode, nodeBuf);
+        status = hfsplus_fetch_node(ctx, volHeader, attrHeader, NULL, &(volHeader->attributesFile), thisNode, nodeBuf, nodeSize);
         if (status != CL_SUCCESS) {
             cli_dbgmsg("hfsplus_check_attribute: node fetch failed.\n");
             goto done;
@@ -656,7 +657,8 @@ done:
 
 /* Fetch a node's contents into the buffer */
 static cl_error_t hfsplus_fetch_node(cli_ctx *ctx, hfsPlusVolumeHeader *volHeader, hfsHeaderRecord *catHeader,
-                                     hfsHeaderRecord *extHeader, hfsPlusForkData *catFork, uint32_t node, uint8_t *buff)
+                                     hfsHeaderRecord *extHeader, hfsPlusForkData *catFork, uint32_t node, uint8_t *buff,
+                                     size_t buffSize)
 {
     bool foundBlock = false;
     uint64_t catalogOffset;
@@ -739,6 +741,11 @@ static cl_error_t hfsplus_fetch_node(cli_ctx *ctx, hfsPlusVolumeHeader *volHeade
             fileOffset += startOffset;
         } else if (curBlock == endBlock) {
             readSize = endSize;
+        }
+
+        if ((buffOffset + readSize) > buffSize) {
+            cli_dbgmsg("hfsplus_fetch_node: Not enough space for read\n");
+            return CL_EFORMAT;
         }
 
         if (fmap_readn(ctx->fmap, buff + buffOffset, fileOffset, readSize) != readSize) {
@@ -887,7 +894,7 @@ static cl_error_t hfsplus_read_block_table(int fd, uint32_t *numBlocks, hfsPlusR
     }
 
     *numBlocks = le32_to_host(*numBlocks); // Let's do a little little endian just for fun, shall we?
-    *table     = cli_malloc(sizeof(hfsPlusResourceBlockTable) * *numBlocks);
+    *table     = cli_max_malloc(sizeof(hfsPlusResourceBlockTable) * *numBlocks);
     if (!*table) {
         cli_dbgmsg("hfsplus_read_block_table: Failed to allocate memory for block table\n");
         status = CL_EMEM;
@@ -941,7 +948,7 @@ static cl_error_t hfsplus_walk_catalog(cli_ctx *ctx, hfsPlusVolumeHeader *volHea
     nodeSize  = catHeader->nodeSize;
 
     /* Need to buffer current node, map will keep moving */
-    nodeBuf = cli_malloc(nodeSize);
+    nodeBuf = cli_max_malloc(nodeSize);
     if (!nodeBuf) {
         cli_dbgmsg("hfsplus_walk_catalog: failed to acquire node buffer, "
                    "size " STDu32 "\n",
@@ -964,7 +971,7 @@ static cl_error_t hfsplus_walk_catalog(cli_ctx *ctx, hfsPlusVolumeHeader *volHea
         }
 
         /* fetch node into buffer */
-        status = hfsplus_fetch_node(ctx, volHeader, catHeader, extHeader, &(volHeader->catalogFile), thisNode, nodeBuf);
+        status = hfsplus_fetch_node(ctx, volHeader, catHeader, extHeader, &(volHeader->catalogFile), thisNode, nodeBuf, nodeSize);
         if (status != CL_SUCCESS) {
             cli_dbgmsg("hfsplus_walk_catalog: node fetch failed.\n");
             goto done;
@@ -1316,6 +1323,11 @@ static cl_error_t hfsplus_walk_catalog(cli_ctx *ctx, hfsPlusVolumeHeader *volHea
                                                         stream.next_out  = uncompressed_block;
 
                                                         extracted_file = true;
+
+                                                        if (stream.avail_in > 0 && Z_STREAM_END == z_ret) {
+                                                            cli_dbgmsg("hfsplus_walk_catalog: Reached end of stream even though there's still some available bytes left!\n");
+                                                            break;
+                                                        }
                                                     }
                                                 } else {
                                                     if (cli_writen(ofd, &block[streamBeginning ? 1 : 0], readLen - (streamBeginning ? 1 : 0)) != readLen - (streamBeginning ? 1 : 0)) {

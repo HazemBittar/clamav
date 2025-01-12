@@ -1,7 +1,7 @@
 /*
  *  Unit tests for bytecode functions.
  *
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2009-2013 Sourcefire, Inc.
  *
  *  Authors: Török Edvin
@@ -83,8 +83,8 @@ static void runtest(const char *file, uint64_t expected, int fail, int nojit,
     cctx.dconf = cctx.engine->dconf;
 
     cctx.recursion_stack_size = cctx.engine->max_recursion_level;
-    cctx.recursion_stack      = cli_calloc(sizeof(recursion_level_t), cctx.recursion_stack_size);
-    ck_assert_msg(!!cctx.recursion_stack, "cli_calloc() for recursion_stack failed");
+    cctx.recursion_stack      = calloc(sizeof(recursion_level_t), cctx.recursion_stack_size);
+    ck_assert_msg(!!cctx.recursion_stack, "calloc() for recursion_stack failed");
 
     // ctx was memset, so recursion_level starts at 0.
     cctx.recursion_stack[cctx.recursion_level].fmap = NULL;
@@ -509,8 +509,8 @@ static void runload(const char *dbname, struct cl_engine *engine, unsigned signo
         /* when run from automake srcdir is set, but if run manually then not */
         srcdir = SRCDIR;
     }
-    str = cli_malloc(strlen(srcdir) + 1 + strlen(dbname) + 1);
-    ck_assert_msg(!!str, "cli_malloc");
+    str = malloc(strlen(srcdir) + 1 + strlen(dbname) + 1);
+    ck_assert_msg(!!str, "malloc");
     sprintf(str, "%s" PATHSEP "%s", srcdir, dbname);
 
     rc = cl_load(str, engine, &signo, CL_DB_STDOPT);

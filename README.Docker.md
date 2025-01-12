@@ -35,7 +35,19 @@ You can use the `unstable` version (i.e. `clamav/clamav:unstable` or
 
 While it is recommended to pull the image from our
 [Docker Hub registry](https://hub.docker.com/u/clamav/clamav), some may want
-to build the image locally instead. All that is needed is:
+to build the image locally instead.
+
+To do this, you will need to get the  `Dockerfile` and the supporting `scripts/`
+directory from the
+[clamav-docker Git repository](https://github.com/Cisco-Talos/clamav-docker).
+Be sure to select the correct one for this ClamAV release.
+
+> _Tip_: For unreleased ClamAV versions, such as when building from the `main`
+> git branch, you should select the files from the
+> `clamav-docker/clamav/unstable/<distro>` directory.
+
+Place the `Dockerfile` and `scripts/` directory in the ClamAV source directory.
+Then you can build the image. For example, run:
 ```bash
 docker build --tag "clamav:TICKET-123" .
 ```
@@ -141,7 +153,7 @@ To do so, you have two options:
    ```
 
    When doing this, it's best to use the `<version>_base` image tags so as to
-   save on bandwith. E.g.:
+   save on bandwidth. E.g.:
    ```bash
    docker run -it --rm \
        --name "clam_container_01" \
@@ -227,7 +239,7 @@ connecting to the dockerized `clamd`. This can be done by either pointing
 ### Dockerized ClamDScan
 
 Running both `clamd` and `clamdscan` is also easily possible, as all that is
-needed is the shared socket between the two containers. The only cavaet here
+needed is the shared socket between the two containers. The only caveat here
 is to:
 1. mount the files to be scanned in the container that will run `clamd`, or
 2. mount the files to be scanned in the container that will `clamdscan` run if
@@ -369,7 +381,7 @@ The healthcheck results can be viewed with `docker inspect`.
 
 When the container starts up, the health-check also starts up. As loading the
 virus database can take some time, there is a delay configured in the
-`Dockerfile` to try and avoid this race condition.
+`Dockerfile` to try to avoid this race condition.
 
 ## Performance
 

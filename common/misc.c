@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2007-2013 Sourcefire, Inc.
  *
  *  Authors: Tomasz Kojm
@@ -44,7 +44,6 @@
 #include <errno.h>
 
 // libclamav
-#include "clamav.h"
 #include "cvd.h"
 #include "others.h" /* for cli_rmdirs() */
 #include "regex/regex.h"
@@ -335,7 +334,7 @@ int daemonize_parent_wait(const char *const user, const char *const log_file)
         return -1;
     } else if (daemonizePid) { // parent
         /* The parent will wait until either the child process
-         * exits, or signals the parent that it's initialization is
+         * exits, or signals the parent that its initialization is
          * complete.  If it exits, it is due to an error condition,
          * so the parent should exit with the same error code as the child.
          * If the child signals the parent that initialization is complete, it
@@ -480,10 +479,36 @@ unsigned int countlines(const char *filename)
         return 0;
 
     while (fgets(buff, sizeof(buff), fh)) {
+        // ignore comments
         if (buff[0] == '#') continue;
+
+        // ignore empty lines in CR/LF format
+        if (buff[0] == '\r' && buff[1] == '\n') continue;
+
+        // ignore empty lines in LF format
+        if (buff[0] == '\n') continue;
+
         lines++;
     }
 
     fclose(fh);
     return lines;
+}
+
+cl_error_t check_if_cvd_outdated(const char *path, long long days)
+{
+    cl_error_t status;
+    time_t cvd_age;
+
+    if ((status = cl_cvdgetage(path, &cvd_age)) != CL_SUCCESS) {
+        logg(LOGG_ERROR, "%s\n", cl_strerror(status));
+        return status;
+    }
+
+    if (days * 86400 < cvd_age) {
+        logg(LOGG_ERROR, "Virus database is older than %lld days!\n", days);
+        return CL_ECVD;
+    }
+
+    return CL_SUCCESS;
 }

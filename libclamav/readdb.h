@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2007-2013 Sourcefire, Inc.
  *  Copyright (C) 2002-2007 Tomasz Kojm <tkojm@clamav.net>
  *
@@ -81,6 +81,10 @@ struct cli_matcher;
         cli_strbcasestr(ext, ".ign") ||  \
         cli_strbcasestr(ext, ".ign2") || \
         cli_strbcasestr(ext, ".imp"))
+#define CLI_DBEXT_SIGNATURE(ext)        \
+    (                                   \
+        cli_strbcasestr(ext, ".cvd") || \
+        cli_strbcasestr(ext, ".cld"))
 #else
 #define CLI_DBEXT(ext)                   \
     (                                    \
@@ -120,6 +124,10 @@ struct cli_matcher;
         cli_strbcasestr(ext, ".ign") ||  \
         cli_strbcasestr(ext, ".ign2") || \
         cli_strbcasestr(ext, ".imp"))
+#define CLI_DBEXT_SIGNATURE(ext)        \
+    (                                   \
+        cli_strbcasestr(ext, ".cvd") || \
+        cli_strbcasestr(ext, ".cld"))
 #endif
 
 char *cli_virname(const char *virname, unsigned int official);
@@ -175,7 +183,7 @@ cl_error_t cli_add_content_match_pattern(struct cli_matcher *root, const char *v
  * Called once for each subsignature in a logical signature.
  * Not for use in other signature types (ndb, yara, etc).
  *
- * This function determines what type of subsiganture it is, whether that's:
+ * This function determines what type of subsignature it is, whether that's:
  * - a macro subsignature
  * - a pcre subsignature
  * - a byte compare subsignature

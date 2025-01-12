@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2007-2013 Sourcefire, Inc.
  *
  *  Authors: Alberto Wu, Tomasz Kojm, Andrew Williams
@@ -376,7 +376,7 @@ void findres(uint32_t by_type, uint32_t by_name, fmap_t *map, struct cli_exe_inf
         cli_dbgmsg("findres: Assumption Violated: Looking for version info when peinfo->offset != 0\n");
     }
 
-    res_rva = EC32(peinfo->dirs[2].VirtualAddress);
+    res_rva = peinfo->dirs[2].VirtualAddress;
 
     if (!(resdir = fmap_need_off_once(map, cli_rawaddr(res_rva, peinfo->sections, peinfo->nsections, &err, map->len, peinfo->hdr_size), 16)) || err)
         return;
@@ -572,9 +572,9 @@ static cl_error_t scan_pe_mdb(cli_ctx *ctx, struct cli_exe_section *exe_section)
         foundsize[type] = cli_hm_have_size(mdb_sect, type, exe_section->rsz);
         foundwild[type] = cli_hm_have_wild(mdb_sect, type);
         if (foundsize[type] || foundwild[type]) {
-            hashset[type] = cli_malloc(hashlen[type]);
+            hashset[type] = malloc(hashlen[type]);
             if (!hashset[type]) {
-                cli_errmsg("scan_pe_mdb: cli_malloc failed!\n");
+                cli_errmsg("scan_pe_mdb: malloc failed!\n");
                 for (; type > 0;)
                     free(hashset[--type]);
                 return CL_EMEM;
@@ -602,9 +602,9 @@ static cl_error_t scan_pe_mdb(cli_ctx *ctx, struct cli_exe_section *exe_section)
                 goto end;
             }
 
-            md5 = cli_malloc(16);
+            md5 = malloc(16);
             if (!(md5)) {
-                cli_errmsg("scan_pe_mdb: cli_malloc failed!\n");
+                cli_errmsg("scan_pe_mdb: malloc failed!\n");
                 ret = CL_EMEM;
                 goto end;
             }
@@ -2211,7 +2211,7 @@ static char *pe_ordinal(const char *dll, uint16_t ord)
     if (name[0] == '\0')
         sprintf(name, "ord%u", ord);
 
-    return cli_strdup(name);
+    return cli_safer_strdup(name);
 }
 
 static int validate_impname(const char *name, uint32_t length, int dll)
@@ -2247,11 +2247,7 @@ static inline int hash_impfns(cli_ctx *ctx, void **hashctx, uint32_t *impsz, str
     int num_fns = 0, ret = CL_SUCCESS;
     const char *buffer;
     cli_hash_type_t type;
-#if HAVE_JSON
     json_object *imptbl = NULL;
-#else
-    void *imptbl = NULL;
-#endif
 
     if (image->u.OriginalFirstThunk)
         thuoff = cli_rawaddr(image->u.OriginalFirstThunk, peinfo->sections, peinfo->nsections, &err, fsize, peinfo->hdr_size);
@@ -2262,7 +2258,6 @@ static inline int hash_impfns(cli_ctx *ctx, void **hashctx, uint32_t *impsz, str
         return CL_EFORMAT;
     }
 
-#if HAVE_JSON
     if (ctx->wrkproperty) {
         imptbl = cli_jsonarray(ctx->wrkproperty, "ImportTable");
         if (!imptbl) {
@@ -2270,7 +2265,6 @@ static inline int hash_impfns(cli_ctx *ctx, void **hashctx, uint32_t *impsz, str
             return CL_EMEM;
         }
     }
-#endif
 
 #define UPDATE_IMPHASH()                                                            \
     do {                                                                            \
@@ -2297,7 +2291,7 @@ static inline int hash_impfns(cli_ctx *ctx, void **hashctx, uint32_t *impsz, str
                 break;                                                              \
             }                                                                       \
                                                                                     \
-            fname = cli_calloc(funclen + dlllen + 3, sizeof(char));                 \
+            fname = cli_max_calloc(funclen + dlllen + 3, sizeof(char));             \
             if (fname == NULL) {                                                    \
                 cli_dbgmsg("scan_pe: cannot allocate memory for imphash string\n"); \
                 ret = CL_EMEM;                                                      \
@@ -2331,9 +2325,12 @@ static inline int hash_impfns(cli_ctx *ctx, void **hashctx, uint32_t *impsz, str
 
         while ((num_fns < PE_MAXIMPORTS) && (fmap_readn(map, &thunk32, thuoff, sizeof(struct pe_image_thunk32)) == sizeof(struct pe_image_thunk32)) && (thunk32.u.Ordinal != 0)) {
             char *funcname = NULL;
+            uint32_t temp;
+
             thuoff += sizeof(struct pe_image_thunk32);
 
-            thunk32.u.Ordinal = EC32(thunk32.u.Ordinal);
+            temp              = EC32(thunk32.u.Ordinal);
+            thunk32.u.Ordinal = temp;
 
             if (!(thunk32.u.Ordinal & PE_IMAGEDIR_ORDINAL_FLAG32)) {
                 offset = cli_rawaddr(thunk32.u.Function, peinfo->sections, peinfo->nsections, &err, fsize, peinfo->hdr_size);
@@ -2367,9 +2364,14 @@ static inline int hash_impfns(cli_ctx *ctx, void **hashctx, uint32_t *impsz, str
 
         while ((num_fns < PE_MAXIMPORTS) && (fmap_readn(map, &thunk64, thuoff, sizeof(struct pe_image_thunk64)) == sizeof(struct pe_image_thunk64)) && (thunk64.u.Ordinal != 0)) {
             char *funcname = NULL;
+
+            // Temporary variable so we don't have overlapping writes with the EC32 reads.
+            uint64_t temp;
+
             thuoff += sizeof(struct pe_image_thunk64);
 
-            thunk64.u.Ordinal = EC64(thunk64.u.Ordinal);
+            temp              = EC64(thunk64.u.Ordinal);
+            thunk64.u.Ordinal = temp;
 
             if (!(thunk64.u.Ordinal & PE_IMAGEDIR_ORDINAL_FLAG64)) {
                 offset = cli_rawaddr(thunk64.u.Function, peinfo->sections, peinfo->nsections, &err, fsize, peinfo->hdr_size);
@@ -2474,6 +2476,9 @@ static cl_error_t hash_imptbl(cli_ctx *ctx, unsigned char **digest, uint32_t *im
     while (left > sizeof(struct pe_image_import_descriptor) && nimps < PE_MAXIMPORTS) {
         char *dllname = NULL;
 
+        // Temporary variable so we don't have overlapping writes with the EC32 reads.
+        uint32_t temp;
+
         /* Get copy of image import descriptor to work with */
         memcpy(&image, impdes, sizeof(struct pe_image_import_descriptor));
 
@@ -2489,11 +2494,16 @@ static cl_error_t hash_imptbl(cli_ctx *ctx, unsigned char **digest, uint32_t *im
         impdes++;
 
         /* Endian Conversion */
-        image.u.OriginalFirstThunk = EC32(image.u.OriginalFirstThunk);
-        image.TimeDateStamp        = EC32(image.TimeDateStamp);
-        image.ForwarderChain       = EC32(image.ForwarderChain);
-        image.Name                 = EC32(image.Name);
-        image.FirstThunk           = EC32(image.FirstThunk);
+        temp                       = EC32(image.u.OriginalFirstThunk);
+        image.u.OriginalFirstThunk = temp;
+        temp                       = EC32(image.TimeDateStamp);
+        image.TimeDateStamp        = temp;
+        temp                       = EC32(image.ForwarderChain);
+        image.ForwarderChain       = temp;
+        temp                       = EC32(image.Name);
+        image.Name                 = temp;
+        temp                       = EC32(image.FirstThunk);
+        image.FirstThunk           = temp;
 
         /* DLL name acquisition */
         offset = cli_rawaddr(image.Name, peinfo->sections, peinfo->nsections, &err, fsize, peinfo->hdr_size);
@@ -2572,9 +2582,9 @@ static cl_error_t scan_pe_imp(cli_ctx *ctx, struct cli_exe_info *peinfo)
     for (type = CLI_HASH_MD5; type < CLI_HASH_AVAIL_TYPES; type++) {
         genhash[type] = cli_hm_have_any(imp, type);
         if (genhash[type]) {
-            hashset[type] = cli_malloc(hashlen[type]);
+            hashset[type] = malloc(hashlen[type]);
             if (!hashset[type]) {
-                cli_errmsg("scan_pe: cli_malloc failed!\n");
+                cli_errmsg("scan_pe: malloc failed!\n");
                 for (; type > 0;)
                     free(hashset[--type]);
                 return CL_EMEM;
@@ -2585,15 +2595,11 @@ static cl_error_t scan_pe_imp(cli_ctx *ctx, struct cli_exe_info *peinfo)
     }
 
     /* Force md5 hash generation for debug and preclass */
-#if HAVE_JSON
     if ((cli_debug_flag || ctx->wrkproperty) && !genhash[CLI_HASH_MD5]) {
-#else
-    if (cli_debug_flag && !genhash[CLI_HASH_MD5]) {
-#endif
         genhash[CLI_HASH_MD5] = 1;
-        hashset[CLI_HASH_MD5] = cli_calloc(hashlen[CLI_HASH_MD5], sizeof(char));
+        hashset[CLI_HASH_MD5] = calloc(hashlen[CLI_HASH_MD5], sizeof(char));
         if (!hashset[CLI_HASH_MD5]) {
-            cli_errmsg("scan_pe: cli_malloc failed!\n");
+            cli_errmsg("scan_pe: calloc failed!\n");
             for (type = CLI_HASH_MD5; type < CLI_HASH_AVAIL_TYPES; type++)
                 free(hashset[type]);
             return CL_EMEM;
@@ -2613,17 +2619,13 @@ static cl_error_t scan_pe_imp(cli_ctx *ctx, struct cli_exe_info *peinfo)
     }
 
     /* Print hash */
-#if HAVE_JSON
     if (cli_debug_flag || ctx->wrkproperty) {
-#else
-    if (cli_debug_flag) {
-#endif
         char *dstr = cli_str2hex((char *)hashset[CLI_HASH_MD5], hashlen[CLI_HASH_MD5]);
         cli_dbgmsg("IMP: %s:%u\n", dstr ? (char *)dstr : "(NULL)", impsz);
-#if HAVE_JSON
+
         if (ctx->wrkproperty)
             cli_jsonstr(ctx->wrkproperty, "Imphash", dstr ? dstr : "(NULL)");
-#endif
+
         if (dstr)
             free(dstr);
     }
@@ -2649,7 +2651,6 @@ static cl_error_t scan_pe_imp(cli_ctx *ctx, struct cli_exe_info *peinfo)
     return ret;
 }
 
-#if HAVE_JSON
 static struct json_object *get_pe_property(cli_ctx *ctx)
 {
     struct json_object *pe;
@@ -2760,7 +2761,6 @@ static void add_section_info(cli_ctx *ctx, struct cli_exe_section *s)
 
     json_object_array_add(sections, section);
 }
-#endif
 
 int cli_scanpe(cli_ctx *ctx)
 {
@@ -2784,17 +2784,14 @@ int cli_scanpe(cli_ctx *ctx)
 #ifdef HAVE__INTERNAL__SHA_COLLECT
     int sha_collect = ctx->sha_collect;
 #endif
-#if HAVE_JSON
     int toval                   = 0;
     struct json_object *pe_json = NULL;
-#endif
 
     if (!ctx) {
         cli_errmsg("cli_scanpe: ctx == NULL\n");
         return CL_ENULLARG;
     }
 
-#if HAVE_JSON
     if (cli_json_timeout_cycle_check(ctx, &toval) != CL_SUCCESS) {
         return CL_ETIMEOUT;
     }
@@ -2802,7 +2799,7 @@ int cli_scanpe(cli_ctx *ctx)
     if (SCAN_COLLECT_METADATA) {
         pe_json = get_pe_property(ctx);
     }
-#endif
+
     map   = ctx->fmap;
     fsize = map->len;
 
@@ -2811,11 +2808,9 @@ int cli_scanpe(cli_ctx *ctx)
 
     uint32_t opts = CLI_PEHEADER_OPT_DBG_PRINT_INFO | CLI_PEHEADER_OPT_REMOVE_MISSING_SECTIONS;
 
-#if HAVE_JSON
     if (SCAN_COLLECT_METADATA) {
         opts |= CLI_PEHEADER_OPT_COLLECT_JSON;
     }
-#endif
 
     if (DETECT_BROKEN_PE) {
         opts |= CLI_PEHEADER_OPT_STRICT_ON_PE_ERRORS;
@@ -2866,7 +2861,7 @@ int cli_scanpe(cli_ctx *ctx)
             // TODO Regarding the commented out check below:
             // This used to check that the section name was NULL, but now that
             // header parsing is done in cli_peheader (and since we don't yet
-            // make the section name availabe via peinfo->sections[]) it would
+            // make the section name available via peinfo->sections[]) it would
             // be a pain to fetch the name here.  Since this is the only place
             // in cli_scanpe that needs the section name, and since I verified
             // that detection still occurs for Polipos without this check,
@@ -2967,11 +2962,7 @@ int cli_scanpe(cli_ctx *ctx)
 
     /* Attempt to run scans on import table */
     /* Run if there are existing signatures and/or preclassing */
-#if HAVE_JSON
     if (DCONF & PE_CONF_IMPTBL && (ctx->engine->hm_imp || ctx->wrkproperty)) {
-#else
-    if (DCONF & PE_CONF_IMPTBL && ctx->engine->hm_imp) {
-#endif
         ret = scan_pe_imp(ctx, peinfo);
         switch (ret) {
             case CL_SUCCESS:
@@ -3202,7 +3193,7 @@ int cli_scanpe(cli_ctx *ctx)
                 if (xsjs == 1280)
                     break;
 
-                if (!(jumps = (uint32_t *)cli_realloc2(jumps, (xsjs + 128) * sizeof(uint32_t)))) {
+                if (!(jumps = (uint32_t *)cli_max_realloc_or_free(jumps, (xsjs + 128) * sizeof(uint32_t)))) {
                     cli_exe_info_destroy(peinfo);
                     return CL_EMEM;
                 }
@@ -3251,7 +3242,7 @@ int cli_scanpe(cli_ctx *ctx)
     /* Trojan.Swizzor.Gen */
     if (SCAN_HEURISTICS && (DCONF & PE_CONF_SWIZZOR) && peinfo->nsections > 1 && fsize > 64 * 1024 && fsize < 4 * 1024 * 1024) {
         if (peinfo->dirs[2].Size) {
-            struct swizz_stats *stats = cli_calloc(1, sizeof(*stats));
+            struct swizz_stats *stats = calloc(1, sizeof(*stats));
             unsigned int m            = 1000;
             ret                       = CL_CLEAN;
 
@@ -3259,7 +3250,7 @@ int cli_scanpe(cli_ctx *ctx)
                 cli_exe_info_destroy(peinfo);
                 return CL_EMEM;
             } else {
-                cli_parseres_special(EC32(peinfo->dirs[2].VirtualAddress), EC32(peinfo->dirs[2].VirtualAddress), map, peinfo, fsize, 0, 0, &m, stats);
+                cli_parseres_special(peinfo->dirs[2].VirtualAddress, peinfo->dirs[2].VirtualAddress, map, peinfo, fsize, 0, 0, &m, stats);
                 if ((ret = cli_detect_swizz(stats)) == CL_VIRUS) {
                     ret = cli_append_potentially_unwanted(ctx, "Heuristics.Trojan.Swizzor.Gen");
                     if (ret != CL_SUCCESS) {
@@ -3285,10 +3276,10 @@ int cli_scanpe(cli_ctx *ctx)
             if (!peinfo->sections[i].rsz && peinfo->sections[i].vsz && peinfo->sections[i + 1].rsz && peinfo->sections[i + 1].vsz) {
                 found = 1;
                 cli_dbgmsg("cli_scanpe: UPX/FSG/MEW: empty section found - assuming compression\n");
-#if HAVE_JSON
+
                 if (pe_json != NULL)
                     cli_jsonbool(pe_json, "HasEmptySection", 1);
-#endif
+
                 break;
             }
         }
@@ -3357,7 +3348,7 @@ int cli_scanpe(cli_ctx *ctx)
             }
 
             /* allocate needed buffer */
-            if (!(src = cli_calloc(ssize + dsize, sizeof(char)))) {
+            if (!(src = cli_max_calloc(ssize + dsize, sizeof(char)))) {
                 cli_exe_info_destroy(peinfo);
                 return CL_EMEM;
             }
@@ -3385,10 +3376,8 @@ int cli_scanpe(cli_ctx *ctx)
                 uselzma = 0;
             }
 
-#if HAVE_JSON
             if (pe_json != NULL)
                 cli_jsonstr(pe_json, "Packer", "MEW");
-#endif
 
             CLI_UNPTEMP("cli_scanpe: MEW", (src, 0));
             CLI_UNPRESULTS("cli_scanpe: MEW", (unmew11(src, offdiff, ssize, dsize, EC32(peinfo->pe_opt.opt32.ImageBase), peinfo->sections[0].rva, uselzma, ndesc)), 1, (src, 0));
@@ -3440,7 +3429,7 @@ int cli_scanpe(cli_ctx *ctx)
                   ) ||
                  (                                                                                                         /* upack 1.1/1.2, based on 2 samples */
                   epbuff[0] == '\xbe' && cli_readint32(epbuff + 1) - EC32(peinfo->pe_opt.opt32.ImageBase) < peinfo->min && /* mov esi */
-                  cli_readint32(epbuff + 1) > EC32(peinfo->pe_opt.opt32.ImageBase) &&
+                  cli_readint32(epbuff + 1) > (int32_t)EC32(peinfo->pe_opt.opt32.ImageBase) &&
                   epbuff[5] == '\xad' && epbuff[6] == '\x8b' && epbuff[7] == '\xf8' /* loads;  mov edi, eax */
                   )))) {
             uint32_t vma, off;
@@ -3473,7 +3462,7 @@ int cli_scanpe(cli_ctx *ctx)
                 break;
             }
 
-            if ((dest = (char *)cli_calloc(dsize, sizeof(char))) == NULL) {
+            if ((dest = (char *)cli_max_calloc(dsize, sizeof(char))) == NULL) {
                 cli_exe_info_destroy(peinfo);
                 return CL_EMEM;
             }
@@ -3493,10 +3482,8 @@ int cli_scanpe(cli_ctx *ctx)
                 break;
             }
 
-#if HAVE_JSON
             if (pe_json != NULL)
                 cli_jsonstr(pe_json, "Packer", "Upack");
-#endif
 
             CLI_UNPTEMP("cli_scanpe: Upack", (dest, 0));
             CLI_UNPRESULTS("cli_scanpe: Upack", (unupack(upack, dest, dsize, epbuff, vma, peinfo->ep, EC32(peinfo->pe_opt.opt32.ImageBase), peinfo->sections[0].rva, ndesc)), 1, (dest, 0));
@@ -3575,15 +3562,13 @@ int cli_scanpe(cli_ctx *ctx)
         newedx = cli_readint32(newebx + 12 - peinfo->sections[i + 1].rva + src) - EC32(peinfo->pe_opt.opt32.ImageBase);
         cli_dbgmsg("cli_scanpe: FSG: found old EP @%x\n", newedx);
 
-        if ((dest = (char *)cli_calloc(dsize, sizeof(char))) == NULL) {
+        if ((dest = (char *)cli_max_calloc(dsize, sizeof(char))) == NULL) {
             cli_exe_info_destroy(peinfo);
             return CL_EMEM;
         }
 
-#if HAVE_JSON
         if (pe_json != NULL)
             cli_jsonstr(pe_json, "Packer", "FSG");
-#endif
 
         CLI_UNPTEMP("cli_scanpe: FSG", (dest, 0));
         CLI_UNPRESULTSFSG2("cli_scanpe: FSG", (unfsg_200(newesi - peinfo->sections[i + 1].rva + src, dest, ssize + peinfo->sections[i + 1].rva - newesi, dsize, newedi, EC32(peinfo->pe_opt.opt32.ImageBase), newedx, ndesc)), 1, (dest, 0));
@@ -3661,7 +3646,7 @@ int cli_scanpe(cli_ctx *ctx)
             break;
         }
 
-        if ((sections = (struct cli_exe_section *)cli_malloc((sectcnt + 1) * sizeof(struct cli_exe_section))) == NULL) {
+        if ((sections = (struct cli_exe_section *)cli_max_malloc((sectcnt + 1) * sizeof(struct cli_exe_section))) == NULL) {
             cli_errmsg("cli_scanpe: FSG: Unable to allocate memory for sections %llu\n", (long long unsigned)((sectcnt + 1) * sizeof(struct cli_exe_section)));
             cli_exe_info_destroy(peinfo);
             return CL_EMEM;
@@ -3678,7 +3663,7 @@ int cli_scanpe(cli_ctx *ctx)
             return CL_EREAD;
         }
 
-        if ((dest = (char *)cli_calloc(dsize, sizeof(char))) == NULL) {
+        if ((dest = (char *)cli_max_calloc(dsize, sizeof(char))) == NULL) {
             cli_exe_info_destroy(peinfo);
             free(sections);
             return CL_EMEM;
@@ -3687,10 +3672,8 @@ int cli_scanpe(cli_ctx *ctx)
         oldep = peinfo->vep + 161 + 6 + cli_readint32(epbuff + 163);
         cli_dbgmsg("cli_scanpe: FSG: found old EP @%x\n", oldep);
 
-#if HAVE_JSON
         if (pe_json != NULL)
             cli_jsonstr(pe_json, "Packer", "FSG");
-#endif
 
         CLI_UNPTEMP("cli_scanpe: FSG", (dest, sections, 0));
         CLI_UNPRESULTSFSG1("cli_scanpe: FSG", (unfsg_133(src + newesi - peinfo->sections[i + 1].rva, dest, ssize + peinfo->sections[i + 1].rva - newesi, dsize, sections, sectcnt, EC32(peinfo->pe_opt.opt32.ImageBase), oldep, ndesc)), 1, (dest, sections, 0));
@@ -3763,7 +3746,7 @@ int cli_scanpe(cli_ctx *ctx)
         if (t >= gp - 10 || cli_readint32(support + t + 6) != 2)
             break;
 
-        if ((sections = (struct cli_exe_section *)cli_malloc((sectcnt + 1) * sizeof(struct cli_exe_section))) == NULL) {
+        if ((sections = (struct cli_exe_section *)cli_max_malloc((sectcnt + 1) * sizeof(struct cli_exe_section))) == NULL) {
             cli_errmsg("cli_scanpe: FSG: Unable to allocate memory for sections %llu\n", (long long unsigned)((sectcnt + 1) * sizeof(struct cli_exe_section)));
             cli_exe_info_destroy(peinfo);
             return CL_EMEM;
@@ -3780,7 +3763,7 @@ int cli_scanpe(cli_ctx *ctx)
             return CL_EREAD;
         }
 
-        if ((dest = (char *)cli_calloc(dsize, sizeof(char))) == NULL) {
+        if ((dest = (char *)cli_max_calloc(dsize, sizeof(char))) == NULL) {
             cli_exe_info_destroy(peinfo);
             free(sections);
             return CL_EMEM;
@@ -3790,10 +3773,8 @@ int cli_scanpe(cli_ctx *ctx)
         oldep = peinfo->vep + gp + 6 + cli_readint32(src + gp + 2 + oldep);
         cli_dbgmsg("cli_scanpe: FSG: found old EP @%x\n", oldep);
 
-#if HAVE_JSON
         if (pe_json != NULL)
             cli_jsonstr(pe_json, "Packer", "FSG");
-#endif
 
         CLI_UNPTEMP("cli_scanpe: FSG", (dest, sections, 0));
         CLI_UNPRESULTSFSG1("cli_scanpe: FSG", (unfsg_133(src + newesi - peinfo->sections[i + 1].rva, dest, ssize + peinfo->sections[i + 1].rva - newesi, dsize, sections, sectcnt, EC32(peinfo->pe_opt.opt32.ImageBase), oldep, ndesc)), 1, (dest, sections, 0));
@@ -3826,7 +3807,7 @@ int cli_scanpe(cli_ctx *ctx)
             return CL_EREAD;
         }
 
-        if ((dest = (char *)cli_calloc(dsize + 8192, sizeof(char))) == NULL) {
+        if ((dest = (char *)cli_max_calloc(dsize + 8192, sizeof(char))) == NULL) {
             cli_exe_info_destroy(peinfo);
             return CL_EMEM;
         }
@@ -3935,10 +3916,9 @@ int cli_scanpe(cli_ctx *ctx)
         cli_exe_info_destroy(peinfo);
 
         CLI_UNPTEMP("cli_scanpe: UPX/FSG", (dest, 0));
-#if HAVE_JSON
+
         if (pe_json != NULL)
             cli_jsonstr(pe_json, "Packer", "UPX");
-#endif
 
         if ((unsigned int)write(ndesc, dest, dsize) != dsize) {
             cli_dbgmsg("cli_scanpe: UPX/FSG: Can't write %d bytes\n", dsize);
@@ -4005,7 +3985,7 @@ int cli_scanpe(cli_ctx *ctx)
 
             CLI_UNPSIZELIMITS("cli_scanpe: Petite", dsize);
 
-            if ((dest = (char *)cli_calloc(dsize, sizeof(char))) == NULL) {
+            if ((dest = (char *)cli_max_calloc(dsize, sizeof(char))) == NULL) {
                 cli_dbgmsg("cli_scanpe: Petite: Can't allocate %d bytes\n", dsize);
                 cli_exe_info_destroy(peinfo);
                 return CL_EMEM;
@@ -4035,13 +4015,11 @@ int cli_scanpe(cli_ctx *ctx)
                 }
             }
 
-#if HAVE_JSON
             if (pe_json != NULL)
                 cli_jsonstr(pe_json, "Packer", "Petite");
-#endif
 
             CLI_UNPTEMP("cli_scanpe: Petite", (dest, 0));
-            CLI_UNPRESULTS("Petite", (petite_inflate2x_1to9(dest, peinfo->min, peinfo->max - peinfo->min, peinfo->sections, peinfo->nsections - (found == 1 ? 1 : 0), EC32(peinfo->pe_opt.opt32.ImageBase), peinfo->vep, ndesc, found, EC32(peinfo->dirs[2].VirtualAddress), EC32(peinfo->dirs[2].Size))), 0, (dest, 0));
+            CLI_UNPRESULTS("Petite", (petite_inflate2x_1to9(dest, peinfo->min, peinfo->max - peinfo->min, peinfo->sections, peinfo->nsections - (found == 1 ? 1 : 0), EC32(peinfo->pe_opt.opt32.ImageBase), peinfo->vep, ndesc, found, peinfo->dirs[2].VirtualAddress, peinfo->dirs[2].Size)), 0, (dest, 0));
         }
     }
 
@@ -4057,7 +4035,7 @@ int cli_scanpe(cli_ctx *ctx)
 
         CLI_UNPSIZELIMITS("cli_scanpe: PEspin", fsize);
 
-        if ((spinned = (char *)cli_malloc(fsize)) == NULL) {
+        if ((spinned = (char *)cli_max_malloc(fsize)) == NULL) {
             cli_errmsg("cli_scanpe: PESping: Unable to allocate memory for spinned %lu\n", (unsigned long)fsize);
             cli_exe_info_destroy(peinfo);
             return CL_EMEM;
@@ -4070,10 +4048,8 @@ int cli_scanpe(cli_ctx *ctx)
             return CL_EREAD;
         }
 
-#if HAVE_JSON
         if (pe_json != NULL)
             cli_jsonstr(pe_json, "Packer", "PEspin");
-#endif
 
         CLI_UNPTEMP("cli_scanpe: PESpin", (spinned, 0));
         CLI_UNPRESULTS_("cli_scanpe: PEspin", SPINCASE(), (unspin(spinned, fsize, peinfo->sections, peinfo->nsections - 1, peinfo->vep, ndesc, ctx)), 0, (spinned, 0));
@@ -4126,7 +4102,7 @@ int cli_scanpe(cli_ctx *ctx)
             size_t num_alerts;
             char *spinned;
 
-            if ((spinned = (char *)cli_malloc(fsize)) == NULL) {
+            if ((spinned = (char *)cli_max_malloc(fsize)) == NULL) {
                 cli_errmsg("cli_scanpe: yC: Unable to allocate memory for spinned %lu\n", (unsigned long)fsize);
                 cli_exe_info_destroy(peinfo);
                 return CL_EMEM;
@@ -4139,10 +4115,8 @@ int cli_scanpe(cli_ctx *ctx)
                 return CL_EREAD;
             }
 
-#if HAVE_JSON
             if (pe_json != NULL)
                 cli_jsonstr(pe_json, "Packer", "yC");
-#endif
 
             // record number of alerts before unpacking and scanning
             num_alerts = evidence_num_alerts(ctx->evidence);
@@ -4156,7 +4130,7 @@ int cli_scanpe(cli_ctx *ctx)
             // If the number of alerts has increased, then bail.
             //
             // This preserves the intention of https://github.com/Cisco-Talos/clamav/commit/771c23099893f02f1316960fbe84f62b115a3556
-            // although that commit had it bailing if a match occured even in allmatch-mode, which we do not want to do.
+            // although that commit had it bailing if a match occurred even in allmatch-mode, which we do not want to do.
             if (!SCAN_ALLMATCHES && num_alerts != evidence_num_alerts(ctx->evidence)) {
                 cli_exe_info_destroy(peinfo);
                 return CL_VIRUS;
@@ -4191,7 +4165,7 @@ int cli_scanpe(cli_ctx *ctx)
 
         CLI_UNPSIZELIMITS("cli_scanpe: WWPack", ssize);
 
-        if (!(src = (char *)cli_calloc(ssize, sizeof(char)))) {
+        if (!(src = (char *)cli_max_calloc(ssize, sizeof(char)))) {
             cli_exe_info_destroy(peinfo);
             return CL_EMEM;
         }
@@ -4220,7 +4194,7 @@ int cli_scanpe(cli_ctx *ctx)
             break;
         }
 
-        if ((packer = (uint8_t *)cli_calloc(peinfo->sections[peinfo->nsections - 1].rsz, sizeof(char))) == NULL) {
+        if ((packer = (uint8_t *)cli_max_calloc(peinfo->sections[peinfo->nsections - 1].rsz, sizeof(char))) == NULL) {
             free(src);
             cli_exe_info_destroy(peinfo);
             return CL_EMEM;
@@ -4234,10 +4208,8 @@ int cli_scanpe(cli_ctx *ctx)
             return CL_EREAD;
         }
 
-#if HAVE_JSON
         if (pe_json != NULL)
             cli_jsonstr(pe_json, "Packer", "WWPack");
-#endif
 
         CLI_UNPTEMP("cli_scanpe: WWPack", (src, packer, 0));
         CLI_UNPRESULTS("cli_scanpe: WWPack", (wwunpack((uint8_t *)src, ssize, packer, peinfo->sections, peinfo->nsections - 1, peinfo->e_lfanew, ndesc)), 0, (src, packer, 0));
@@ -4275,7 +4247,7 @@ int cli_scanpe(cli_ctx *ctx)
 
         CLI_UNPSIZELIMITS("cli_scanpe: Aspack", ssize);
 
-        if (!(src = (char *)cli_calloc(ssize, sizeof(char)))) {
+        if (!(src = (char *)cli_max_calloc(ssize, sizeof(char)))) {
             cli_exe_info_destroy(peinfo);
             return CL_EMEM;
         }
@@ -4296,10 +4268,8 @@ int cli_scanpe(cli_ctx *ctx)
             break;
         }
 
-#if HAVE_JSON
         if (pe_json != NULL)
             cli_jsonstr(pe_json, "Packer", "Aspack");
-#endif
 
         CLI_UNPTEMP("cli_scanpe: Aspack", (src, 0));
         CLI_UNPRESULTS("cli_scanpe: Aspack", (unaspack((uint8_t *)src, ssize, peinfo->sections, peinfo->nsections, peinfo->vep - 1, EC32(peinfo->pe_opt.opt32.ImageBase), ndesc, aspack_ver)), 1, (src, 0));
@@ -4353,7 +4323,7 @@ int cli_scanpe(cli_ctx *ctx)
         if (!ssize || !dsize || dsize != peinfo->sections[0].vsz)
             break;
 
-        if (!(dest = cli_malloc(dsize))) {
+        if (!(dest = cli_max_malloc(dsize))) {
             cli_errmsg("cli_scanpe: NsPack: Unable to allocate memory for dest %u\n", dsize);
             break;
         }
@@ -4380,10 +4350,8 @@ int cli_scanpe(cli_ctx *ctx)
         eprva = eprva + 5 + cli_readint32(nbuff + 1);
         cli_dbgmsg("cli_scanpe: NsPack: OEP = %08x\n", eprva);
 
-#if HAVE_JSON
         if (pe_json != NULL)
             cli_jsonstr(pe_json, "Packer", "NsPack");
-#endif
 
         CLI_UNPTEMP("cli_scanpe: NsPack", (dest, 0));
         CLI_UNPRESULTS("cli_scanpe: NsPack", (unspack(src, dest, ctx, peinfo->sections[0].rva, EC32(peinfo->pe_opt.opt32.ImageBase), eprva, ndesc)), 0, (dest, 0));
@@ -4425,10 +4393,8 @@ int cli_scanpe(cli_ctx *ctx)
 
     cli_exe_info_destroy(peinfo);
 
-#if HAVE_JSON
     if (cli_json_timeout_cycle_check(ctx, &toval) != CL_SUCCESS)
         return CL_ETIMEOUT;
-#endif
 
     return CL_SUCCESS;
 }
@@ -4508,7 +4474,7 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
     uint32_t stored_opt_hdr_size;
     struct pe_image_file_hdr *file_hdr;
     struct pe_image_optional_hdr32 *opt32;
-    struct pe_image_optional_hdr64 *opt64;
+    struct pe_image_optional_hdr64 *opt64     = NULL;
     struct pe_image_section_hdr *section_hdrs = NULL;
     size_t i, j, section_pe_idx;
     unsigned int err;
@@ -4519,12 +4485,11 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
     uint32_t is_exe = 0;
     int native      = 0;
     size_t read;
+    uint32_t temp;
 
-#if HAVE_JSON
     int toval                   = 0;
     struct json_object *pe_json = NULL;
     char jsonbuf[128];
-#endif
 
     if (ctx == NULL &&
         (opts & CLI_PEHEADER_OPT_COLLECT_JSON ||
@@ -4533,11 +4498,9 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
         goto done;
     }
 
-#if HAVE_JSON
     if (opts & CLI_PEHEADER_OPT_COLLECT_JSON) {
         pe_json = get_pe_property(ctx);
     }
-#endif
 
     fsize = map->len - peinfo->offset;
     if (fmap_readn(map, &e_magic, peinfo->offset, sizeof(e_magic)) != sizeof(e_magic)) {
@@ -4557,7 +4520,8 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
         goto done;
     }
 
-    peinfo->e_lfanew = EC32(peinfo->e_lfanew);
+    temp             = EC32(peinfo->e_lfanew);
+    peinfo->e_lfanew = temp;
     if (opts & CLI_PEHEADER_OPT_DBG_PRINT_INFO) {
         cli_dbgmsg("e_lfanew == %d\n", peinfo->e_lfanew);
     }
@@ -4581,10 +4545,9 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
 
     if (EC16(file_hdr->Characteristics) & 0x2000) {
 
-#if HAVE_JSON
         if (opts & CLI_PEHEADER_OPT_COLLECT_JSON)
             cli_jsonstr(pe_json, "Type", "DLL");
-#endif
+
         if (opts & CLI_PEHEADER_OPT_DBG_PRINT_INFO) {
             cli_dbgmsg("File type: DLL\n");
         }
@@ -4592,10 +4555,9 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
         is_dll = 1;
     } else if (EC16(file_hdr->Characteristics) & 0x0002) {
 
-#if HAVE_JSON
         if (opts & CLI_PEHEADER_OPT_COLLECT_JSON)
             cli_jsonstr(pe_json, "Type", "EXE");
-#endif
+
         if (opts & CLI_PEHEADER_OPT_DBG_PRINT_INFO) {
             cli_dbgmsg("File type: Executable\n");
         }
@@ -4726,20 +4688,17 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
         if (opts & CLI_PEHEADER_OPT_DBG_PRINT_INFO)
             cli_dbgmsg("Machine type: %s\n", archtype);
 
-#if HAVE_JSON
         if (opts & CLI_PEHEADER_OPT_COLLECT_JSON)
             cli_jsonstr(pe_json, "ArchType", archtype);
-#endif
     }
 
     peinfo->nsections = EC16(file_hdr->NumberOfSections);
     if (peinfo->nsections == 0) {
 
-#if HAVE_JSON
         if (opts & CLI_PEHEADER_OPT_COLLECT_JSON) {
             pe_add_heuristic_property(ctx, "BadNumberOfSections");
         }
-#endif
+
         // TODO Investigate how corrupted_input is set and whether this
         // check is needed
         if (opts & CLI_PEHEADER_OPT_DBG_PRINT_INFO &&
@@ -4761,26 +4720,23 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
         cli_dbgmsg("SizeOfOptionalHeader: 0x%x\n", opt_hdr_size);
     }
 
-#if HAVE_JSON
     if (opts & CLI_PEHEADER_OPT_COLLECT_JSON) {
         cli_jsonint(pe_json, "NumberOfSections", peinfo->nsections);
         /* NOTE: the TimeDateStamp value will look like "Wed Dec 31 19:00:00 1969\n" */
         cli_jsonstr(pe_json, "TimeDateStamp", cli_ctime(&timestamp, timestr, sizeof(timestr)));
         cli_jsonint(pe_json, "SizeOfOptionalHeader", opt_hdr_size);
     }
-#endif
 
     // Ensure there are enough bytes to cover the full optional header,
-    // not including the data directory entries (which aren't all gauranteed
+    // not including the data directory entries (which aren't all guaranteed
     // to be there)
     if (opt_hdr_size < sizeof(struct pe_image_optional_hdr32)) {
         cli_dbgmsg("cli_peheader: SizeOfOptionalHeader too small\n");
 
-#if HAVE_JSON
         if (opts & CLI_PEHEADER_OPT_COLLECT_JSON) {
             pe_add_heuristic_property(ctx, "BadOptionalHeaderSize");
         }
-#endif
+
         ret = CL_EFORMAT;
         goto done;
     }
@@ -4802,16 +4758,16 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
 
         if (opt_hdr_size < sizeof(struct pe_image_optional_hdr64)) {
             cli_dbgmsg("cli_peheader: Incorrect SizeOfOptionalHeader for PE32+\n");
-#if HAVE_JSON
+
             if (opts & CLI_PEHEADER_OPT_COLLECT_JSON) {
                 pe_add_heuristic_property(ctx, "BadOptionalHeaderSizePE32Plus");
             }
-#endif
+
             ret = CL_EFORMAT;
             goto done;
         }
 
-        if (fmap_readn(map, (void *)(((size_t) & (peinfo->pe_opt.opt64)) + sizeof(struct pe_image_optional_hdr32)), at, OPT_HDR_SIZE_DIFF) != OPT_HDR_SIZE_DIFF) {
+        if (fmap_readn(map, (void *)((size_t)&peinfo->pe_opt.opt64 + sizeof(struct pe_image_optional_hdr32)), at, OPT_HDR_SIZE_DIFF) != OPT_HDR_SIZE_DIFF) {
             cli_dbgmsg("cli_peheader: Can't read additional optional file header bytes\n");
             ret = CL_EFORMAT;
             goto done;
@@ -4845,7 +4801,6 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
             cli_dbgmsg("NumberOfRvaAndSizes: %u\n", peinfo->ndatadirs);
         }
 
-#if HAVE_JSON
         if (opts & CLI_PEHEADER_OPT_COLLECT_JSON) {
             cli_jsonint(pe_json, "MajorLinkerVersion", opt64->MajorLinkerVersion);
             cli_jsonint(pe_json, "MinorLinkerVersion", opt64->MinorLinkerVersion);
@@ -4874,7 +4829,6 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
             snprintf(jsonbuf, sizeof(jsonbuf), "0x%x", peinfo->hdr_size);
             cli_jsonstr(pe_json, "SizeOfHeaders", jsonbuf);
         }
-#endif
 
     } else { /* PE */
         peinfo->is_pe32plus = 0;
@@ -4900,7 +4854,6 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
             cli_dbgmsg("NumberOfRvaAndSizes: %u\n", peinfo->ndatadirs);
         }
 
-#if HAVE_JSON
         if (opts & CLI_PEHEADER_OPT_COLLECT_JSON) {
             cli_jsonint(pe_json, "MajorLinkerVersion", opt32->MajorLinkerVersion);
             cli_jsonint(pe_json, "MinorLinkerVersion", opt32->MinorLinkerVersion);
@@ -4929,13 +4882,12 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
             snprintf(jsonbuf, sizeof(jsonbuf), "0x%x", peinfo->hdr_size);
             cli_jsonstr(pe_json, "SizeOfHeaders", jsonbuf);
         }
-#endif
     }
 
-    salign = (peinfo->is_pe32plus) ? EC32(opt64->SectionAlignment) : EC32(opt32->SectionAlignment);
-    falign = (peinfo->is_pe32plus) ? EC32(opt64->FileAlignment) : EC32(opt32->FileAlignment);
+    salign = (peinfo->is_pe32plus && opt64 != NULL) ? EC32(opt64->SectionAlignment) : EC32(opt32->SectionAlignment);
+    falign = (peinfo->is_pe32plus && opt64 != NULL) ? EC32(opt64->FileAlignment) : EC32(opt32->FileAlignment);
 
-    switch (peinfo->is_pe32plus ? EC16(opt64->Subsystem) : EC16(opt32->Subsystem)) {
+    switch ((peinfo->is_pe32plus && opt64 != NULL) ? EC16(opt64->Subsystem) : EC16(opt32->Subsystem)) {
         case 0:
             subsystem = "Unknown";
             break;
@@ -4988,10 +4940,8 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
         cli_dbgmsg("------------------------------------\n");
     }
 
-#if HAVE_JSON
     if (opts & CLI_PEHEADER_OPT_COLLECT_JSON)
         cli_jsonstr(pe_json, "Subsystem", subsystem);
-#endif
 
     if (!native && (!salign || (salign % 0x1000))) {
         cli_dbgmsg("cli_peheader: Bad section alignment\n");
@@ -5043,6 +4993,18 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
         cli_dbgmsg("cli_peheader: Can't read optional file header data dirs\n");
         goto done;
     }
+
+    for (i = 0; i < peinfo->ndatadirs; i++) {
+        uint32_t tmp;
+        struct pe_image_data_dir *dir = peinfo->dirs;
+
+        tmp                   = EC32(dir[i].VirtualAddress);
+        dir[i].VirtualAddress = tmp;
+
+        tmp         = EC32(dir[i].Size);
+        dir[i].Size = tmp;
+    }
+
     at += data_dirs_size;
 
     if (opt_hdr_size != (stored_opt_hdr_size + data_dirs_size)) {
@@ -5068,14 +5030,14 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
     // TODO in cli_checkpe_fp this aligned to falign, elsewhere it aligned to salign
     peinfo->hdr_size = PESALIGN(peinfo->hdr_size, salign);
 
-    peinfo->sections = (struct cli_exe_section *)cli_calloc(peinfo->nsections, sizeof(struct cli_exe_section));
+    peinfo->sections = (struct cli_exe_section *)cli_max_calloc(peinfo->nsections, sizeof(struct cli_exe_section));
 
     if (!peinfo->sections) {
         cli_dbgmsg("cli_peheader: Can't allocate memory for section headers\n");
         goto done;
     }
 
-    section_hdrs = (struct pe_image_section_hdr *)cli_calloc(peinfo->nsections, sizeof(struct pe_image_section_hdr));
+    section_hdrs = (struct pe_image_section_hdr *)cli_max_calloc(peinfo->nsections, sizeof(struct pe_image_section_hdr));
 
     if (!section_hdrs) {
         cli_dbgmsg("cli_peheader: Can't allocate memory for section headers\n");
@@ -5124,7 +5086,7 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
         section->ursz = EC32(section_hdr->SizeOfRawData);
 
         /* First, if a section exists totally outside of a file, remove the
-         * section from the list or zero out it's size. */
+         * section from the list or zero out its size. */
         if (section->rsz) { /* Don't bother with virtual only sections */
             if (section->raw >= fsize || section->uraw >= fsize) {
                 cli_dbgmsg("cli_peheader: Broken PE file - Section %zu starts or exists beyond the end of file (Offset@ %lu, Total filesize %lu)\n", section_pe_idx, (unsigned long)section->raw, (unsigned long)fsize);
@@ -5153,7 +5115,7 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
                 }
             } else {
 
-                /* If a section is truncated, adjust it's size value */
+                /* If a section is truncated, adjust its size value */
                 if (!CLI_ISCONTAINED_0_TO(fsize, section->raw, section->rsz)) {
                     cli_dbgmsg("cli_peheader: PE Section %zu raw+rsz extends past the end of the file by %lu bytes\n", section_pe_idx, (section->raw + section->rsz) - fsize);
                     section->rsz = fsize - section->raw;
@@ -5169,7 +5131,6 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
         strncpy(sname, (char *)section_hdr->Name, 8);
         sname[8] = '\0';
 
-#if HAVE_JSON
         if (opts & CLI_PEHEADER_OPT_COLLECT_JSON) {
             add_section_info(ctx, &peinfo->sections[i]);
 
@@ -5178,7 +5139,6 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
                 goto done;
             }
         }
-#endif
 
         // TODO Why do we do this
         // TODO Should this be done before we dump the json
@@ -5277,7 +5237,6 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
         goto done;
     }
 
-#if HAVE_JSON
     if (opts & CLI_PEHEADER_OPT_COLLECT_JSON) {
         cli_jsonint(pe_json, "EntryPointOffset", peinfo->ep);
 
@@ -5286,7 +5245,6 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
             goto done;
         }
     }
-#endif
 
     if (opts & CLI_PEHEADER_OPT_DBG_PRINT_INFO) {
         cli_dbgmsg("EntryPoint offset: 0x%x (%d)\n", peinfo->ep, peinfo->ep);
@@ -5295,7 +5253,7 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
     if (is_dll || peinfo->ndatadirs < 3 || !peinfo->dirs[2].Size)
         peinfo->res_addr = 0;
     else
-        peinfo->res_addr = EC32(peinfo->dirs[2].VirtualAddress);
+        peinfo->res_addr = peinfo->dirs[2].VirtualAddress;
 
     while (opts & CLI_PEHEADER_OPT_EXTRACT_VINFO &&
            peinfo->ndatadirs >= 3 && peinfo->dirs[2].Size) {
@@ -5482,7 +5440,7 @@ cl_error_t cli_peheader(fmap_t *map, struct cli_exe_info *peinfo, uint32_t opts,
         break;
     } /* while(dirs[2].Size) */
 
-    // Do final preperations for peinfo to be passed back
+    // Do final preparations for peinfo to be passed back
     peinfo->is_dll = is_dll;
 
     ret = CL_SUCCESS;
@@ -5557,8 +5515,8 @@ cl_error_t cli_check_auth_header(cli_ctx *ctx, struct cli_exe_info *peinfo)
         }
     }
 
-    sec_dir_offset = EC32(peinfo->dirs[4].VirtualAddress);
-    sec_dir_size   = EC32(peinfo->dirs[4].Size);
+    sec_dir_offset = peinfo->dirs[4].VirtualAddress;
+    sec_dir_size   = peinfo->dirs[4].Size;
 
     // As an optimization, check the security DataDirectory here and if
     // it's less than 8-bytes (and we aren't relying on this code to compute
@@ -5576,7 +5534,7 @@ cl_error_t cli_check_auth_header(cli_ctx *ctx, struct cli_exe_info *peinfo)
     // We'll build a list of the regions that need to be hashed and pass it to
     // asn1_check_mscat to do hash verification there (the hash algorithm is
     // specified in the PKCS7 structure).  We need to hash up to 4 regions
-    regions = (struct cli_mapped_region *)cli_calloc(4, sizeof(struct cli_mapped_region));
+    regions = (struct cli_mapped_region *)calloc(4, sizeof(struct cli_mapped_region));
     if (!regions) {
         ret = CL_EMEM;
         goto finish;
@@ -5767,12 +5725,12 @@ finish:
  * If the section hashes are to be computed and returned, this function
  * allocates memory for the section hashes, and it's up to the caller to free
  * it.  hashes->sections will be initialized to NULL at the beginning of the
- * function, and if after the call it's value is non-NULL, the memory should be
+ * function, and if after the call its value is non-NULL, the memory should be
  * freed.  Furthermore, if hashes->sections is non-NULL, the hashes can assume
  * to be valid regardless of the return code.
  *
  * Also, a few other notes:
- *  - If a section has a virtual size of zero, it's corresponding hash value
+ *  - If a section has a virtual size of zero, its corresponding hash value
  *    will not be computed and the hash contents will be all zeroes.
  *  - If a section extends beyond the end of the file, the section data and
  *    length will be truncated, and the hash generated accordingly
@@ -5819,29 +5777,29 @@ cl_error_t cli_genhash_pe(cli_ctx *ctx, unsigned int class, int type, stats_sect
         case 1:
             genhash[CLI_HASH_MD5] = 1;
             hlen                  = hashlen[CLI_HASH_MD5];
-            hash = hashset[CLI_HASH_MD5] = cli_calloc(hlen, sizeof(char));
+            hash = hashset[CLI_HASH_MD5] = calloc(hlen, sizeof(char));
             break;
         case 2:
             genhash[CLI_HASH_SHA1] = 1;
             hlen                   = hashlen[CLI_HASH_SHA1];
-            hash = hashset[CLI_HASH_SHA1] = cli_calloc(hlen, sizeof(char));
+            hash = hashset[CLI_HASH_SHA1] = calloc(hlen, sizeof(char));
             break;
         default:
             genhash[CLI_HASH_SHA256] = 1;
             hlen                     = hashlen[CLI_HASH_SHA256];
-            hash = hashset[CLI_HASH_SHA256] = cli_calloc(hlen, sizeof(char));
+            hash = hashset[CLI_HASH_SHA256] = calloc(hlen, sizeof(char));
             break;
     }
 
     if (!hash) {
-        cli_errmsg("cli_genhash_pe: cli_malloc failed!\n");
+        cli_errmsg("cli_genhash_pe: calloc failed!\n");
         cli_exe_info_destroy(peinfo);
         return CL_EMEM;
     }
 
     if (hashes) {
         hashes->nsections = peinfo->nsections;
-        hashes->sections  = cli_calloc(peinfo->nsections, sizeof(struct cli_section_hash));
+        hashes->sections  = cli_max_calloc(peinfo->nsections, sizeof(struct cli_section_hash));
 
         if (!(hashes->sections)) {
             cli_exe_info_destroy(peinfo);

@@ -1,7 +1,7 @@
 /*
  *  Execute ClamAV bytecode.
  *
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2009-2013 Sourcefire, Inc.
  *
  *  Authors: Török Edvin
@@ -141,7 +141,7 @@ struct stack {
 };
 
 /* type with largest alignment that we use (in general it is a long double, but
- * thats too big alignment for us) */
+ * that's too big alignment for us) */
 typedef uint64_t align_t;
 
 static always_inline void *cli_stack_alloc(struct stack *stack, unsigned bytes)
@@ -171,7 +171,7 @@ static always_inline void *cli_stack_alloc(struct stack *stack, unsigned bytes)
         return NULL;
     }
     /* not enough room here, allocate new chunk */
-    chunk = cli_malloc(sizeof(*stack->chunk));
+    chunk = malloc(sizeof(*stack->chunk));
     if (!chunk) {
         cli_warnmsg("cli_stack_alloc: Unable to allocate memory for stack-chunk: bytes: %zu!\n", sizeof(*stack->chunk));
         return NULL;
@@ -388,6 +388,8 @@ static always_inline struct stack_entry *pop_stack(struct stack *stack,
         READ1(op1, BINOP(1));                               \
         sop0 = op0;                                         \
         sop1 = op1;                                         \
+        (void)sop0;                                         \
+        (void)sop1;                                         \
         OP;                                                 \
         W0(inst->dest, res);                                \
         break;                                              \
@@ -399,6 +401,8 @@ static always_inline struct stack_entry *pop_stack(struct stack *stack,
         READ8(op1, BINOP(1));                               \
         sop0 = op0;                                         \
         sop1 = op1;                                         \
+        (void)sop0;                                         \
+        (void)sop1;                                         \
         OP;                                                 \
         W1(inst->dest, res);                                \
         break;                                              \
@@ -410,6 +414,8 @@ static always_inline struct stack_entry *pop_stack(struct stack *stack,
         READ16(op1, BINOP(1));                              \
         sop0 = op0;                                         \
         sop1 = op1;                                         \
+        (void)sop0;                                         \
+        (void)sop1;                                         \
         OP;                                                 \
         W2(inst->dest, res);                                \
         break;                                              \
@@ -421,6 +427,8 @@ static always_inline struct stack_entry *pop_stack(struct stack *stack,
         READ32(op1, BINOP(1));                              \
         sop0 = op0;                                         \
         sop1 = op1;                                         \
+        (void)sop0;                                         \
+        (void)sop1;                                         \
         OP;                                                 \
         W3(inst->dest, res);                                \
         break;                                              \
@@ -432,6 +440,8 @@ static always_inline struct stack_entry *pop_stack(struct stack *stack,
         READ64(op1, BINOP(1));                              \
         sop0 = op0;                                         \
         sop1 = op1;                                         \
+        (void)sop0;                                         \
+        (void)sop1;                                         \
         OP;                                                 \
         W4(inst->dest, res);                                \
         break;                                              \
@@ -534,6 +544,24 @@ static always_inline struct stack_entry *pop_stack(struct stack *stack,
         break;                                                                    \
     }
 
+#define DEFINE_OP_BC_RET_VOID(OP, T)                                              \
+    case OP: {                                                                    \
+        operand_t ret;                                                            \
+        CHECK_GT(stack_depth, 0);                                                 \
+        stack_depth--;                                                            \
+        stack_entry = pop_stack(&stack, stack_entry, &func, &ret, &bb,            \
+                                &bb_inst);                                        \
+        values      = stack_entry ? stack_entry->values : ctx->values;            \
+        CHECK_GT(func->numBytes, ret);                                            \
+        if (!bb) {                                                                \
+            stop = CL_BREAK;                                                      \
+            continue;                                                             \
+        }                                                                         \
+        stackid = ptr_register_stack(&ptrinfos, values, 0, func->numBytes) >> 32; \
+        inst    = &bb->insts[bb_inst];                                            \
+        break;                                                                    \
+    }
+
 struct ptr_info {
     uint8_t *base;
     uint32_t size;
@@ -568,8 +596,8 @@ static inline int64_t ptr_register_stack(struct ptr_infos *infos,
                                          uint32_t off, uint32_t size)
 {
     unsigned n              = infos->nstacks + 1;
-    struct ptr_info *sinfos = cli_realloc(infos->stack_infos,
-                                          sizeof(*sinfos) * n);
+    struct ptr_info *sinfos = cli_safer_realloc(infos->stack_infos,
+                                                sizeof(*sinfos) * n);
     if (!sinfos)
         return 0;
     infos->stack_infos = sinfos;
@@ -585,7 +613,7 @@ static inline int64_t ptr_register_glob_fixedid(struct ptr_infos *infos,
 {
     struct ptr_info *sinfos;
     if (n > infos->nglobs) {
-        sinfos = cli_realloc(infos->glob_infos, sizeof(*sinfos) * n);
+        sinfos = cli_safer_realloc(infos->glob_infos, sizeof(*sinfos) * n);
         if (!sinfos)
             return 0;
         memset(sinfos + infos->nglobs, 0, (n - infos->nglobs) * sizeof(*sinfos));
@@ -797,11 +825,11 @@ cl_error_t cli_vm_execute(const struct cli_bc *bc, struct cli_bc_ctx *ctx, const
             DEFINE_OP_BC_RET_N(OP_BC_RET * 5 + 3, uint32_t, READ32, WRITE32);
             DEFINE_OP_BC_RET_N(OP_BC_RET * 5 + 4, uint64_t, READ64, WRITE64);
 
-            DEFINE_OP_BC_RET_N(OP_BC_RET_VOID * 5, uint8_t, (void), (void));
-            DEFINE_OP_BC_RET_N(OP_BC_RET_VOID * 5 + 1, uint8_t, (void), (void));
-            DEFINE_OP_BC_RET_N(OP_BC_RET_VOID * 5 + 2, uint8_t, (void), (void));
-            DEFINE_OP_BC_RET_N(OP_BC_RET_VOID * 5 + 3, uint8_t, (void), (void));
-            DEFINE_OP_BC_RET_N(OP_BC_RET_VOID * 5 + 4, uint8_t, (void), (void));
+            DEFINE_OP_BC_RET_VOID(OP_BC_RET_VOID * 5, uint8_t);
+            DEFINE_OP_BC_RET_VOID(OP_BC_RET_VOID * 5 + 1, uint8_t);
+            DEFINE_OP_BC_RET_VOID(OP_BC_RET_VOID * 5 + 2, uint8_t);
+            DEFINE_OP_BC_RET_VOID(OP_BC_RET_VOID * 5 + 3, uint8_t);
+            DEFINE_OP_BC_RET_VOID(OP_BC_RET_VOID * 5 + 4, uint8_t);
 
             DEFINE_ICMPOP(OP_BC_ICMP_EQ, res = (op0 == op1));
             DEFINE_ICMPOP(OP_BC_ICMP_NE, res = (op0 != op1));

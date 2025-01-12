@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2007-2013 Sourcefire, Inc.
  *  Copyright (C) 2002-2007 Tomasz Kojm <tkojm@clamav.net>
  *
@@ -40,6 +40,9 @@ typedef struct _freshclam_dat_v1 {
     time_t retry_after;        /** retry date. If > 0, don't update until after this date */
 } freshclam_dat_v1_t;
 
+/*Length of a cf-ray id.*/
+#define CFRAY_LEN 20
+
 /* ----------------------------------------------------------------------------
  * Internal libfreshclam globals
  */
@@ -64,6 +67,7 @@ extern uint32_t g_requestTimeout;
 extern uint32_t g_bCompressLocalDatabase;
 
 extern freshclam_dat_v1_t *g_freshclamDat;
+extern uint8_t g_lastRay[CFRAY_LEN + 1];
 
 fc_error_t load_freshclam_dat(void);
 fc_error_t save_freshclam_dat(void);

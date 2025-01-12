@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2009-2013 Sourcefire, Inc.
  *
  *  Authors: Tomasz Kojm, aCaB
@@ -164,7 +164,7 @@ static int isremote(const struct optstruct *opts)
 }
 
 /* pings clamd at the specified interval the number of time specified
- * return 0 on a succesful connection, 1 upon timeout, -1 on error */
+ * return 0 on a successful connection, 1 upon timeout, -1 on error */
 int16_t ping_clamd(const struct optstruct *opts)
 {
 
@@ -188,7 +188,7 @@ int16_t ping_clamd(const struct optstruct *opts)
     /* ping command takes the form --ping [attempts[:interval]] */
     if (NULL != (opt = optget(opts, "ping"))) {
         if (NULL != opt->strarg) {
-            if (NULL == (attempt_str = cli_strdup(opt->strarg))) {
+            if (NULL == (attempt_str = cli_safer_strdup(opt->strarg))) {
                 logg(LOGG_ERROR, "could not allocate memory for string\n");
                 ret = -1;
                 goto done;
@@ -208,7 +208,7 @@ int16_t ping_clamd(const struct optstruct *opts)
             }
             attempts = cli_strntoul(attempt_str, strlen(attempt_str), &errchk, 10);
             if (attempt_str + strlen(attempt_str) > errchk) {
-                logg(LOGG_WARNING, "attmept_str would go past end of buffer\n");
+                logg(LOGG_WARNING, "attempt_str would go past end of buffer\n");
                 ret = -1;
                 goto done;
             }

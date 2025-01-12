@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2007-2013 Sourcefire, Inc.
  *
  *  Authors: Tomasz Kojm
@@ -232,7 +232,7 @@ void help(void)
     mprintf(LOGG_INFO, "\n");
     mprintf(LOGG_INFO, "                       Clam AntiVirus: Scanner %s\n", get_version());
     mprintf(LOGG_INFO, "           By The ClamAV Team: https://www.clamav.net/about.html#credits\n");
-    mprintf(LOGG_INFO, "           (C) 2022 Cisco Systems, Inc.\n");
+    mprintf(LOGG_INFO, "           (C) 2024 Cisco Systems, Inc.\n");
     mprintf(LOGG_INFO, "\n");
     mprintf(LOGG_INFO, "    clamscan [options] [file/directory/-]\n");
     mprintf(LOGG_INFO, "\n");
@@ -250,11 +250,15 @@ void help(void)
     mprintf(LOGG_INFO, "\n");
     mprintf(LOGG_INFO, "    --tempdir=DIRECTORY                  Create temporary files in DIRECTORY\n");
     mprintf(LOGG_INFO, "    --leave-temps[=yes/no(*)]            Do not remove temporary files\n");
+    mprintf(LOGG_INFO, "    --force-to-disk[=yes/no(*)]          Create temporary files for nested file scans that would otherwise be in-memory only\n");
     mprintf(LOGG_INFO, "    --gen-json[=yes/no(*)]               Generate JSON metadata for the scanned file(s). For testing & development use ONLY.\n");
     mprintf(LOGG_INFO, "                                         JSON will be printed if --debug is enabled.\n");
     mprintf(LOGG_INFO, "                                         A JSON file will dropped to the temp directory if --leave-temps is enabled.\n");
+    mprintf(LOGG_INFO, "    --json-store-html-urls[=yes(*)/no]   Store html URLs in metadata.\n");
+    mprintf(LOGG_INFO, "                                         URLs will be written to the metadata.json file in an array called 'HTMLUrls'\n");
     mprintf(LOGG_INFO, "    --database=FILE/DIR   -d FILE/DIR    Load virus database from FILE or load all supported db files from DIR\n");
     mprintf(LOGG_INFO, "    --official-db-only[=yes/no(*)]       Only load official signatures\n");
+    mprintf(LOGG_INFO, "    --fail-if-cvd-older-than=days        Return with a nonzero error code if virus database outdated.\n");
     mprintf(LOGG_INFO, "    --log=FILE            -l FILE        Save scan report to FILE\n");
     mprintf(LOGG_INFO, "    --recursive[=yes/no(*)]  -r          Scan subdirectories recursively\n");
     mprintf(LOGG_INFO, "    --allmatch[=yes/no(*)]   -z          Continue scanning within file after finding a match\n");
@@ -303,7 +307,10 @@ void help(void)
     mprintf(LOGG_INFO, "    --scan-html[=yes(*)/no]              Scan HTML files\n");
     mprintf(LOGG_INFO, "    --scan-xmldocs[=yes(*)/no]           Scan xml-based document files\n");
     mprintf(LOGG_INFO, "    --scan-hwp3[=yes(*)/no]              Scan HWP3 files\n");
+    mprintf(LOGG_INFO, "    --scan-onenote[=yes(*)/no]           Scan OneNote files\n");
     mprintf(LOGG_INFO, "    --scan-archive[=yes(*)/no]           Scan archive files (supported by libclamav)\n");
+    mprintf(LOGG_INFO, "    --scan-image[=yes(*)/no]             Scan image (graphics) files\n");
+    mprintf(LOGG_INFO, "    --scan-image-fuzzy-hash[=yes(*)/no]  Detect files by calculating image (graphics) fuzzy hashes\n");
     mprintf(LOGG_INFO, "    --alert-broken[=yes/no(*)]           Alert on broken executable files (PE & ELF)\n");
     mprintf(LOGG_INFO, "    --alert-broken-media[=yes/no(*)]     Alert on broken graphics files (JPEG, TIFF, PNG, GIF)\n");
     mprintf(LOGG_INFO, "    --alert-encrypted[=yes/no(*)]        Alert on encrypted archives and documents\n");
@@ -331,11 +338,9 @@ void help(void)
     mprintf(LOGG_INFO, "    --max-partitions=#n                  Maximum number of partitions in disk image to be scanned\n");
     mprintf(LOGG_INFO, "    --max-iconspe=#n                     Maximum number of icons in PE file to be scanned\n");
     mprintf(LOGG_INFO, "    --max-rechwp3=#n                     Maximum recursive calls to HWP3 parsing function\n");
-#if HAVE_PCRE
     mprintf(LOGG_INFO, "    --pcre-match-limit=#n                Maximum calls to the PCRE match function.\n");
     mprintf(LOGG_INFO, "    --pcre-recmatch-limit=#n             Maximum recursive calls to the PCRE match function.\n");
     mprintf(LOGG_INFO, "    --pcre-max-filesize=#n               Maximum size file to perform PCRE subsig matching.\n");
-#endif /* HAVE_PCRE */
     mprintf(LOGG_INFO, "    --disable-cache                      Disable caching and cache checks for hash sums of scanned files.\n");
     mprintf(LOGG_INFO, "\n");
     mprintf(LOGG_INFO, "Pass in - as the filename for stdin.\n");

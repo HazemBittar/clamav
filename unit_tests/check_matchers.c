@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2008-2013 Sourcefire, Inc.
  *
  *  Authors: Tomasz Kojm
@@ -125,8 +125,6 @@ static const struct ac_sigopts_testdata_s {
 
     {NULL, 0, NULL, NULL, ACPATT_OPTION_NOOPTS, NULL, CL_CLEAN}};
 
-#if HAVE_PCRE
-
 static const struct pcre_testdata_s {
     const char *data;
     const char *hexsig;
@@ -152,8 +150,6 @@ static const struct pcre_testdata_s {
 
     {NULL, NULL, NULL, ACPATT_OPTION_NOOPTS, NULL, CL_CLEAN}};
 
-#endif /* HAVE_PCRE */
-
 static cli_ctx ctx;
 static struct cl_scan_options options;
 
@@ -178,8 +174,8 @@ static void setup(void)
     ctx.dconf = ctx.engine->dconf;
 
     ctx.recursion_stack_size = ctx.engine->max_recursion_level;
-    ctx.recursion_stack      = cli_calloc(sizeof(recursion_level_t), ctx.recursion_stack_size);
-    ck_assert_msg(!!ctx.recursion_stack, "cli_calloc() for recursion_stack failed");
+    ctx.recursion_stack      = calloc(sizeof(recursion_level_t), ctx.recursion_stack_size);
+    ck_assert_msg(!!ctx.recursion_stack, "calloc() for recursion_stack failed");
 
     // ctx was memset, so recursion_level starts at 0.
     ctx.recursion_stack[ctx.recursion_level].fmap = &thefmap;
@@ -456,8 +452,6 @@ START_TEST(test_bm_scanbuff_allscan)
 }
 END_TEST
 
-#if HAVE_PCRE
-
 START_TEST(test_pcre_scanbuff)
 {
     struct cli_ac_data mdata;
@@ -472,13 +466,10 @@ START_TEST(test_pcre_scanbuff)
 #ifdef USE_MPOOL
     root->mempool = mpool_create();
 #endif
-    ret = cli_pcre_init();
-    ck_assert_msg(ret == CL_SUCCESS, "[pcre] cli_pcre_init() failed");
-
     for (i = 0; pcre_testdata[i].data; i++) {
         hexlen = strlen(PCRE_BYPASS) + strlen(pcre_testdata[i].hexsig) + 1;
 
-        hexsig = cli_calloc(hexlen, sizeof(char));
+        hexsig = calloc(hexlen, sizeof(char));
         ck_assert_msg(hexsig != NULL, "[pcre] failed to prepend bypass (out-of-memory)");
 
         strncat(hexsig, PCRE_BYPASS, hexlen);
@@ -526,13 +517,11 @@ START_TEST(test_pcre_scanbuff_allscan)
 #ifdef USE_MPOOL
     root->mempool = mpool_create();
 #endif
-    ret = cli_pcre_init();
-    ck_assert_msg(ret == CL_SUCCESS, "[pcre] cli_pcre_init() failed");
 
     for (i = 0; pcre_testdata[i].data; i++) {
         hexlen = strlen(PCRE_BYPASS) + strlen(pcre_testdata[i].hexsig) + 1;
 
-        hexsig = cli_calloc(hexlen, sizeof(char));
+        hexsig = calloc(hexlen, sizeof(char));
         ck_assert_msg(hexsig != NULL, "[pcre] failed to prepend bypass (out-of-memory)");
 
         strncat(hexsig, PCRE_BYPASS, hexlen);
@@ -581,8 +570,6 @@ START_TEST(test_pcre_scanbuff_allscan)
 }
 END_TEST
 
-#endif /* HAVE_PCRE */
-
 Suite *test_matchers_suite(void)
 {
     Suite *s = suite_create("matchers");
@@ -593,14 +580,10 @@ Suite *test_matchers_suite(void)
     tcase_add_test(tc_matchers, test_ac_scanbuff);
     tcase_add_test(tc_matchers, test_ac_scanbuff_ex);
     tcase_add_test(tc_matchers, test_bm_scanbuff);
-#if HAVE_PCRE
     tcase_add_test(tc_matchers, test_pcre_scanbuff);
-#endif
     tcase_add_test(tc_matchers, test_ac_scanbuff_allscan);
     tcase_add_test(tc_matchers, test_ac_scanbuff_allscan_ex);
     tcase_add_test(tc_matchers, test_bm_scanbuff_allscan);
-#if HAVE_PCRE
     tcase_add_test(tc_matchers, test_pcre_scanbuff_allscan);
-#endif
     return s;
 }

@@ -1,7 +1,7 @@
 /*
  *  Extract component parts of OLE2 files (e.g. MS Office Documents)
  *
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2007-2013 Sourcefire, Inc.
  *
  *  Authors: Kevin Lin
@@ -26,8 +26,6 @@
 
 #include "others.h"
 #include "uniq.h"
-
-#if HAVE_JSON
 
 #define PROPCNTLIMIT 25
 #define PROPSTRLIMIT 256 /* affects property strs, NOT sanitized strs (may result in a buffer allocating PROPSTRLIMIT*6) */
@@ -169,7 +167,5 @@ typedef struct summary_ctx {
 
 /* Summary and Document Information Parsing to JSON */
 int cli_ole2_summary_json(cli_ctx *ctx, int fd, int mode);
-
-#endif /* HAVE_JSON */
 
 #endif /* __MSDOC_H_ */

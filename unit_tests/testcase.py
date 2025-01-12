@@ -1,4 +1,4 @@
-# Copyright (C) 2017-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+# Copyright (C) 2017-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
 
 """
 Wrapper for unittest to provide ClamAV specific test environment features.
@@ -507,6 +507,20 @@ class TestCase(unittest.TestCase):
             - namedtuple(ec, out, err).
         """
         return self.execute(cmd, **kwargs)
+
+    # Find the metadata.json file and verify its contents.
+    def verify_metadata_json(self, tempdir, expected=[], unexpected=[]):
+        for parent, dirs, files in os.walk(tempdir):
+            for f in files:
+                if "metadata.json" == f:
+                    with open(os.path.join(parent, f)) as handle:
+                        metadata_json = handle.read()
+                        self.verify_output(metadata_json, expected=expected, unexpected=unexpected)
+
+                    # There is only one metadata.json per scan.
+                    # We found it, so we can break out of the loop.
+                    break
+
 
 
 class Logger(object):

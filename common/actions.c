@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2009-2013 Sourcefire, Inc.
  *
  *  Author: aCaB, Micah Snyder
@@ -113,9 +113,9 @@ typedef void (*PRIUS)(
     PCWSTR SourceString);
 
 /**
- * @brief A openat equivalent for Win32 with a check to NOFOLLOW soft-links.
+ * @brief An openat equivalent for Win32 with a check to NOFOLLOW soft-links.
  *
- * The caller is resposible for closing the HANDLE.
+ * The caller is responsible for closing the HANDLE.
  *
  * For the desiredAccess, fileAttributes, createOptions, and shareAccess parameters
  * see https://docs.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile
@@ -325,7 +325,9 @@ static int traverse_to(const char *directory, bool want_directory_handle, HANDLE
             /* Empty token, likely first / or double // */
             continue;
         }
+
 #ifndef _WIN32
+
         next_handle = openat(current_handle, tokens[i], O_RDONLY | O_NOFOLLOW);
         if (-1 == next_handle) {
             logg(LOGG_INFO, "traverse_to: Failed open %s\n", tokens[i]);
@@ -334,7 +336,9 @@ static int traverse_to(const char *directory, bool want_directory_handle, HANDLE
         close(current_handle);
         current_handle = next_handle;
         next_handle    = -1;
+
 #else
+
         if (true != want_directory_handle) {
             if (i == tokens_count - 1) {
                 /* Change createfile options for our target file instead of an intermediate directory. */
@@ -376,6 +380,7 @@ static int traverse_to(const char *directory, bool want_directory_handle, HANDLE
         current_handle = next_handle;
         next_handle    = NULL;
 #endif
+
         logg(LOGG_DEBUG, "traverse_to: Handle opened for '%s' directory.\n", tokens[i]);
     }
 
@@ -403,7 +408,7 @@ done:
  * @brief Rename (move) a file from Source to Destination without following symlinks.
  *
  * This approach mitigates the possibility that one of the directories
- * in the path has been replaces with a malicious symlink.
+ * in the path has been replaced with a malicious symlink.
  *
  * @param source        Source pathname.
  * @param destination   Destination pathname (including file name)
@@ -525,7 +530,7 @@ done:
  * @brief Unlink (delete) a target file without following symlinks.
  *
  * This approach mitigates the possibility that one of the directories
- * in the path has been replaces with a malicious symlink.
+ * in the path has been replaced with a malicious symlink.
  *
  * @param target    A file to be deleted.
  * @return 0        Unlink succeeded.

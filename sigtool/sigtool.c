@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2007-2013 Sourcefire, Inc.
  *  Copyright (C) 2002-2007 Tomasz Kojm <tkojm@clamav.net>
  *
@@ -38,6 +38,10 @@
 #include <dirent.h>
 #include <ctype.h>
 #include <libgen.h>
+
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
 
 // libclamav
 #include "clamav.h"
@@ -215,7 +219,7 @@ static int hashpe(const char *filename, unsigned int class, int type)
     ctx.dconf          = (struct cli_dconf *)engine->dconf;
 
     ctx.recursion_stack_size = ctx.engine->max_recursion_level;
-    ctx.recursion_stack      = cli_calloc(sizeof(recursion_level_t), ctx.recursion_stack_size);
+    ctx.recursion_stack      = calloc(sizeof(recursion_level_t), ctx.recursion_stack_size);
     if (!ctx.recursion_stack) {
         goto done;
     }
@@ -430,23 +434,162 @@ done:
     return status;
 }
 
+static cli_ctx *convenience_ctx(int fd)
+{
+    cl_error_t status        = CL_EMEM;
+    cli_ctx *ctx             = NULL;
+    struct cl_engine *engine = NULL;
+    cl_fmap_t *new_map       = NULL;
+
+    /* build engine */
+    engine = cl_engine_new();
+    if (NULL == engine) {
+        printf("convenience_ctx: engine initialization failed\n");
+        goto done;
+    }
+
+    cl_engine_set_num(engine, CL_ENGINE_AC_ONLY, 1);
+
+    if (cli_initroots(engine, 0) != CL_SUCCESS) {
+        printf("convenience_ctx: cli_initroots() failed\n");
+        goto done;
+    }
+
+    if (cli_add_content_match_pattern(engine->root[0], "test", "deadbeef", 0, 0, 0, "*", NULL, 0) != CL_SUCCESS) {
+        printf("convenience_ctx: Can't parse signature\n");
+        goto done;
+    }
+
+    if (CL_SUCCESS != cl_engine_compile(engine)) {
+        printf("convenience_ctx: failed to compile engine.");
+        goto done;
+    }
+
+    /* fake input fmap */
+    new_map = fmap(fd, 0, 0, NULL);
+    if (NULL == new_map) {
+        printf("convenience_ctx: fmap failed\n");
+        goto done;
+    }
+
+    /* prepare context */
+    ctx = calloc(1, sizeof(cli_ctx));
+    if (!ctx) {
+        printf("convenience_ctx: ctx allocation failed\n");
+        goto done;
+    }
+
+    ctx->engine = (const struct cl_engine *)engine;
+
+    ctx->evidence = evidence_new();
+
+    ctx->dconf = (struct cli_dconf *)engine->dconf;
+
+    ctx->recursion_stack_size = ctx->engine->max_recursion_level;
+    ctx->recursion_stack      = calloc(sizeof(recursion_level_t), ctx->recursion_stack_size);
+    if (!ctx->recursion_stack) {
+        status = CL_EMEM;
+        goto done;
+    }
+
+    // ctx was calloc'd, so recursion_level starts at 0.
+    ctx->recursion_stack[ctx->recursion_level].fmap = new_map;
+    ctx->recursion_stack[ctx->recursion_level].type = CL_TYPE_ANY; // ANY for the top level, because we don't yet know the type.
+    ctx->recursion_stack[ctx->recursion_level].size = new_map->len;
+
+    ctx->fmap = ctx->recursion_stack[ctx->recursion_level].fmap;
+
+    ctx->options = calloc(1, sizeof(struct cl_scan_options));
+    if (!ctx->options) {
+        printf("convenience_ctx: scan options allocation failed\n");
+        goto done;
+    }
+    ctx->options->general |= CL_SCAN_GENERAL_HEURISTICS;
+    ctx->options->parse = ~(0);
+
+    status = CL_SUCCESS;
+
+done:
+    if (CL_SUCCESS != status) {
+        if (NULL != new_map) {
+            funmap(new_map);
+        }
+        if (NULL != ctx) {
+            if (NULL != ctx->options) {
+                free(ctx->options);
+            }
+            if (NULL != ctx->recursion_stack) {
+                free(ctx->recursion_stack);
+            }
+            free(ctx);
+            ctx = NULL;
+        }
+        if (NULL != engine) {
+            cl_engine_free(engine);
+        }
+    }
+
+    return ctx;
+}
+
+static void destroy_ctx(cli_ctx *ctx)
+{
+    if (NULL != ctx) {
+        if (NULL != ctx->recursion_stack) {
+            /* Clean up any fmaps */
+            while (ctx->recursion_level > 0) {
+                if (NULL != ctx->recursion_stack[ctx->recursion_level].fmap) {
+                    funmap(ctx->recursion_stack[ctx->recursion_level].fmap);
+                    ctx->recursion_stack[ctx->recursion_level].fmap = NULL;
+                }
+                ctx->recursion_level -= 1;
+            }
+            if (NULL != ctx->recursion_stack[0].fmap) {
+                funmap(ctx->recursion_stack[0].fmap);
+                ctx->recursion_stack[0].fmap = NULL;
+            }
+
+            free(ctx->recursion_stack);
+            ctx->recursion_stack = NULL;
+        }
+
+        if (NULL != ctx->engine) {
+            cl_engine_free((struct cl_engine *)ctx->engine);
+            ctx->engine = NULL;
+        }
+
+        if (NULL != ctx->options) {
+            free(ctx->options);
+            ctx->options = NULL;
+        }
+
+        if (NULL != ctx->evidence) {
+            evidence_free(ctx->evidence);
+        }
+
+        free(ctx);
+    }
+}
+
 static int htmlnorm(const struct optstruct *opts)
 {
     int fd;
-    fmap_t *map;
+    cli_ctx *ctx = NULL;
 
     if ((fd = open(optget(opts, "html-normalise")->strarg, O_RDONLY | O_BINARY)) == -1) {
         mprintf(LOGG_ERROR, "htmlnorm: Can't open file %s\n", optget(opts, "html-normalise")->strarg);
         return -1;
     }
 
-    if ((map = fmap(fd, 0, 0, optget(opts, "html-normalise")->strarg))) {
-        html_normalise_map(map, ".", NULL, NULL);
-        funmap(map);
+    if (NULL != (ctx = convenience_ctx(fd))) {
+        html_normalise_map(ctx, ctx->fmap, ".", NULL, NULL);
+        funmap(ctx->fmap);
     } else
         mprintf(LOGG_ERROR, "fmap failed\n");
 
     close(fd);
+
+    destroy_ctx(ctx);
 
     return 0;
 }
@@ -615,7 +758,7 @@ static int writeinfo(const char *dbname, const char *builder, const char *header
 {
     FILE *fh;
     unsigned int i, bytes;
-    char file[32], *pt, dbfile[32];
+    char file[4096], *pt, dbfile[4096];
     unsigned char digest[32], buffer[FILEBUFF];
     void *ctx;
 
@@ -697,11 +840,19 @@ static int writeinfo(const char *dbname, const char *builder, const char *header
 }
 
 static int diffdirs(const char *old, const char *new, const char *patch);
-static int verifydiff(const char *diff, const char *cvd, const char *incdir);
+static int verifydiff(const struct optstruct *opts, const char *diff, const char *cvd, const char *incdir);
 
 static int qcompare(const void *a, const void *b)
 {
     return strcmp(*(char *const *)a, *(char *const *)b);
+}
+
+char *createTempDir(const struct optstruct *opts);
+void removeTempDir(const struct optstruct *opts, char *dir)
+{
+    if (!optget(opts, "leave-temps")->enabled) {
+        cli_rmdirs(dir);
+    }
 }
 
 static int build(const struct optstruct *opts)
@@ -712,7 +863,7 @@ static int build(const struct optstruct *opts)
     STATBUF foo;
     unsigned char buffer[FILEBUFF];
     char *tarfile, header[513], smbuff[32], builder[33], *pt, olddb[512];
-    char patch[50], broken[57], dbname[32], dbfile[36];
+    char patch[50], broken[57], dbname[32], dbfile[4096];
     const char *newcvd, *localdbdir = NULL;
     struct cl_engine *engine;
     FILE *cvd, *fh;
@@ -922,7 +1073,7 @@ static int build(const struct optstruct *opts)
     strcat(header, builder);
 
     /* add current time */
-    sprintf(header + strlen(header), ":%u", (unsigned int)timet);
+    sprintf(header + strlen(header), ":" STDu64, (uint64_t)timet);
 
     if (writeinfo(dbname, builder, header, opts, dblist2, dblist2cnt) == -1) {
         mprintf(LOGG_ERROR, "build: Can't generate info file\n");
@@ -1004,6 +1155,20 @@ static int build(const struct optstruct *opts)
         free(tarfile);
         return -1;
     }
+
+    // Check if the MD5 starts with 00. If it does, we'll return CL_ELAST_ERROR. The caller may try again for better luck.
+    // This is to avoid a bug in hash verification with ClamAV 1.1 -> 1.4. The bug was fixed in 1.5.0.
+    // TODO: Remove this workaround when no one is using those versions.
+    if (pt[0] == '0' && pt[1] == '0') {
+        // print out the pt hash
+        mprintf(LOGG_INFO, "The tar.gz MD5 starts with 00, which will fail to verify in ClamAV 1.1 -> 1.4: %s\n", pt);
+        fclose(fh);
+        unlink(tarfile);
+        free(tarfile);
+        free(pt);
+        return CL_ELAST_ERROR;
+    }
+
     rewind(fh);
     sprintf(header + strlen(header), "%s:", pt);
     free(pt);
@@ -1026,7 +1191,7 @@ static int build(const struct optstruct *opts)
     strcat(header, builder);
 
     /* add current time */
-    sprintf(header + strlen(header), ":%u", (unsigned int)timet);
+    sprintf(header + strlen(header), ":" STDu64, (uint64_t)timet);
 
     /* fill up with spaces */
     while (strlen(header) < sizeof(header) - 1)
@@ -1087,22 +1252,13 @@ static int build(const struct optstruct *opts)
     }
 
     /* generate patch */
-    if (!(pt = cli_gentemp(NULL))) {
-        mprintf(LOGG_ERROR, "build: Can't generate temporary name\n");
-        unlink(newcvd);
+    if (!(pt = createTempDir(opts))) {
         return -1;
     }
 
-    if (mkdir(pt, 0700)) {
-        mprintf(LOGG_ERROR, "build: Can't create temporary directory %s\n", pt);
-        free(pt);
-        unlink(newcvd);
-        return -1;
-    }
-
-    if (CL_SUCCESS != cl_cvdunpack(olddb, pt, false)) {
+    if (CL_SUCCESS != cl_cvdunpack(olddb, pt, true)) {
         mprintf(LOGG_ERROR, "build: Can't unpack CVD file %s\n", olddb);
-        cli_rmdirs(pt);
+        removeTempDir(opts, pt);
         free(pt);
         unlink(newcvd);
         return -1;
@@ -1111,24 +1267,13 @@ static int build(const struct optstruct *opts)
     olddb[sizeof(olddb) - 1] = '\0';
     free(pt);
 
-    if (!(pt = cli_gentemp(NULL))) {
-        mprintf(LOGG_ERROR, "build: Can't generate temporary name\n");
-        cli_rmdirs(olddb);
-        unlink(newcvd);
+    if (!(pt = createTempDir(opts))) {
         return -1;
     }
 
-    if (mkdir(pt, 0700)) {
-        mprintf(LOGG_ERROR, "build: Can't create temporary directory %s\n", pt);
-        free(pt);
-        cli_rmdirs(olddb);
-        unlink(newcvd);
-        return -1;
-    }
-
-    if (CL_SUCCESS != cl_cvdunpack(newcvd, pt, false)) {
+    if (CL_SUCCESS != cl_cvdunpack(newcvd, pt, true)) {
         mprintf(LOGG_ERROR, "build: Can't unpack CVD file %s\n", newcvd);
-        cli_rmdirs(pt);
+        removeTempDir(opts, pt);
         free(pt);
         cli_rmdirs(olddb);
         unlink(newcvd);
@@ -1137,8 +1282,7 @@ static int build(const struct optstruct *opts)
 
     snprintf(patch, sizeof(patch), "%s-%u.script", dbname, version);
     ret = diffdirs(olddb, pt, patch);
-
-    cli_rmdirs(pt);
+    removeTempDir(opts, pt);
     free(pt);
 
     if (ret == -1) {
@@ -1147,7 +1291,7 @@ static int build(const struct optstruct *opts)
         return -1;
     }
 
-    ret = verifydiff(patch, NULL, olddb);
+    ret = verifydiff(opts, patch, NULL, olddb);
     cli_rmdirs(olddb);
 
     if (ret == -1) {
@@ -1200,7 +1344,7 @@ static int unpack(const struct optstruct *opts)
         return -1;
     }
 
-    if (CL_SUCCESS != cl_cvdunpack(name, ".", false)) {
+    if (CL_SUCCESS != cl_cvdunpack(name, ".", true)) {
         mprintf(LOGG_ERROR, "unpack: Can't unpack file %s\n", name);
         return -1;
     }
@@ -1250,9 +1394,9 @@ static int cvdinfo(const struct optstruct *opts)
     return 0;
 }
 
-static int listdb(const char *filename, const regex_t *regex);
+static int listdb(const struct optstruct *opts, const char *filename, const regex_t *regex);
 
-static int listdir(const char *dirname, const regex_t *regex)
+static int listdir(const struct optstruct *opts, const char *dirname, const regex_t *regex)
 {
     DIR *dd;
     struct dirent *dent;
@@ -1297,7 +1441,7 @@ static int listdir(const char *dirname, const regex_t *regex)
                 }
                 sprintf(dbfile, "%s" PATHSEP "%s", dirname, dent->d_name);
 
-                if (listdb(dbfile, regex) == -1) {
+                if (listdb(opts, dbfile, regex) == -1) {
                     mprintf(LOGG_ERROR, "listdb: Error listing database %s\n", dbfile);
                     free(dbfile);
                     closedir(dd);
@@ -1312,7 +1456,7 @@ static int listdir(const char *dirname, const regex_t *regex)
     return 0;
 }
 
-static int listdb(const char *filename, const regex_t *regex)
+static int listdb(const struct optstruct *opts, const char *filename, const regex_t *regex)
 {
     FILE *fh;
     char *buffer, *pt, *start, *dir;
@@ -1343,33 +1487,26 @@ static int listdb(const char *filename, const regex_t *regex)
         free(buffer);
         fclose(fh);
 
-        if (!(dir = cli_gentemp(NULL))) {
-            mprintf(LOGG_ERROR, "listdb: Can't generate temporary name\n");
+        if (!(dir = createTempDir(opts))) {
             return -1;
         }
 
-        if (mkdir(dir, 0700)) {
-            mprintf(LOGG_ERROR, "listdb: Can't create temporary directory %s\n", dir);
-            free(dir);
-            return -1;
-        }
-
-        if (CL_SUCCESS != cl_cvdunpack(filename, dir, false)) {
+        if (CL_SUCCESS != cl_cvdunpack(filename, dir, true)) {
             mprintf(LOGG_ERROR, "listdb: Can't unpack CVD file %s\n", filename);
-            cli_rmdirs(dir);
+            removeTempDir(opts, dir);
             free(dir);
             return -1;
         }
 
         /* list extracted directory */
-        if (listdir(dir, regex) == -1) {
+        if (listdir(opts, dir, regex) == -1) {
             mprintf(LOGG_ERROR, "listdb: Can't list directory %s\n", filename);
-            cli_rmdirs(dir);
+            removeTempDir(opts, dir);
             free(dir);
             return -1;
         }
 
-        cli_rmdirs(dir);
+        removeTempDir(opts, dir);
         free(dir);
 
         return 0;
@@ -1541,13 +1678,13 @@ static int listsigs(const struct optstruct *opts, int mode)
         if (S_ISDIR(sb.st_mode)) {
             if (!strcmp(name, DATADIR)) {
                 dbdir = freshdbdir();
-                ret   = listdir(localdbdir ? localdbdir : dbdir, NULL);
+                ret   = listdir(opts, localdbdir ? localdbdir : dbdir, NULL);
                 free(dbdir);
             } else {
-                ret = listdir(name, NULL);
+                ret = listdir(opts, name, NULL);
             }
         } else {
-            ret = listdb(name, NULL);
+            ret = listdb(opts, name, NULL);
         }
 
     } else {
@@ -1557,7 +1694,7 @@ static int listsigs(const struct optstruct *opts, int mode)
         }
         mprintf_stdout = 1;
         dbdir          = freshdbdir();
-        ret            = listdir(localdbdir ? localdbdir : dbdir, &reg);
+        ret            = listdir(opts, localdbdir ? localdbdir : dbdir, &reg);
         free(dbdir);
         cli_regfree(&reg);
     }
@@ -1565,60 +1702,197 @@ static int listsigs(const struct optstruct *opts, int mode)
     return ret;
 }
 
+char *createTempDir(const struct optstruct *opts)
+{
+    const struct optstruct *opt;
+    const char *tempdir = NULL;
+    char *ret           = NULL;
+
+    if (opts && ((opt = optget(opts, "tempdir"))->enabled)) {
+        tempdir = opt->strarg;
+    } else {
+        tempdir = cli_gettmpdir();
+    }
+
+    ret = (char *)cli_gentemp_with_prefix(tempdir, "sigtool");
+    if (NULL == ret) {
+        logg(LOGG_ERROR, "Can't create temporary directory name.\n");
+        goto done;
+    }
+
+    if (mkdir(ret, 0700)) {
+        logg(LOGG_ERROR, "Can't create temporary directory for scan: %s.\n", tempdir);
+        free((char *)ret);
+        ret = NULL;
+    }
+
+done:
+
+    return ret;
+}
+
+static bool setTempDir(struct cl_engine *engine, const struct optstruct *opts)
+{
+    bool bRet           = false;
+    int ret             = -1;
+    const char *tempdir = createTempDir(opts);
+    if (NULL == tempdir) {
+        goto done;
+    }
+
+    if ((ret = cl_engine_set_str(engine, CL_ENGINE_TMPDIR, tempdir))) {
+        logg(LOGG_ERROR, "cli_engine_set_str(CL_ENGINE_TMPDIR) failed: %s\n", cl_strerror(ret));
+        goto done;
+    }
+
+    bRet = true;
+done:
+    if (tempdir) {
+        free((char *)tempdir);
+    }
+    return bRet;
+}
+
+static void scanfile(const char *filename, struct cl_engine *engine, const struct optstruct *opts, struct cl_scan_options *options)
+{
+    cl_error_t ret           = CL_SUCCESS;
+    int fd                   = -1;
+    const char *virname      = NULL;
+    char *real_filename      = NULL;
+    unsigned long int blocks = 0;
+
+    if (NULL == filename || NULL == engine || NULL == opts || NULL == options) {
+        logg(LOGG_INFO, "scanfile: Invalid args.\n");
+        ret = CL_EARG;
+        goto done;
+    }
+
+    ret = cli_realpath((const char *)filename, &real_filename);
+    if (CL_SUCCESS != ret) {
+        logg(LOGG_DEBUG, "Failed to determine real filename of %s.\n", filename);
+        logg(LOGG_DEBUG, "Quarantine of the file may fail if file path contains symlinks.\n");
+    } else {
+        filename = real_filename;
+    }
+
+    if ((fd = safe_open(filename, O_RDONLY | O_BINARY)) == -1) {
+        logg(LOGG_WARNING, "Can't open file %s: %s\n", filename, strerror(errno));
+        goto done;
+    }
+
+    if (CL_CLEAN != cl_scandesc_callback(fd, filename, &virname, &blocks, engine, options, NULL)) {
+        logg(LOGG_ERROR, "Error parsing '%s'\n", filename);
+        goto done;
+    }
+
+done:
+    if (NULL != real_filename) {
+        free(real_filename);
+    }
+    return;
+}
+
+static int vba_callback(const unsigned char *const metaString, const size_t metaStringLen, void *context)
+{
+
+    size_t i = 0;
+
+    UNUSEDPARAM(context);
+
+    if (NULL == metaString) {
+        return -1;
+    }
+
+    for (i = 0; i < metaStringLen; i++) {
+#ifndef _WIN32
+        if ('\r' == metaString[i]) {
+            continue;
+        }
+#endif
+        printf("%c", metaString[i]);
+    }
+    printf("\n");
+
+    return 0;
+}
+
 static int vbadump(const struct optstruct *opts)
 {
-    int fd, hex_output;
-    char *dir;
-    const char *pt;
-    struct uniq *files = NULL;
-    cli_ctx *ctx;
-    int has_vba = 0, has_xlm = 0;
+    int ret = -1;
 
-    if (optget(opts, "vba-hex")->enabled) {
-        hex_output = 1;
-        pt         = optget(opts, "vba-hex")->strarg;
+    struct cl_scan_options options;
+    struct cl_engine *engine = NULL;
+
+#ifndef _WIN32
+    struct rlimit rlim;
+#endif
+
+    const char *filename = NULL;
+
+    /* Initialize scan options struct */
+    memset(&options, 0, sizeof(struct cl_scan_options));
+
+    if ((ret = cl_init(CL_INIT_DEFAULT))) {
+        logg(LOGG_ERROR, "Can't initialize libclamav: %s\n", cl_strerror(ret));
+        ret = 2;
+        goto done;
+    }
+
+    if (!(engine = cl_engine_new())) {
+        logg(LOGG_ERROR, "Can't initialize antivirus engine\n");
+        ret = 2;
+        goto done;
+    }
+
+    cl_engine_set_clcb_vba(engine, vba_callback);
+
+    if (!setTempDir(engine, opts)) {
+        ret = 2;
+        goto done;
+    }
+
+    if ((ret = cl_engine_compile(engine)) != 0) {
+        logg(LOGG_ERROR, "Database initialization error: %s\n", cl_strerror(ret));
+        ret = 2;
+        goto done;
+    }
+
+#ifndef _WIN32
+    if (getrlimit(RLIMIT_FSIZE, &rlim) == 0) {
+        if (rlim.rlim_cur < (rlim_t)cl_engine_get_num(engine, CL_ENGINE_MAX_FILESIZE, NULL))
+            logg(LOGG_WARNING, "System limit for file size is lower than engine->maxfilesize\n");
+        if (rlim.rlim_cur < (rlim_t)cl_engine_get_num(engine, CL_ENGINE_MAX_SCANSIZE, NULL))
+            logg(LOGG_WARNING, "System limit for file size is lower than engine->maxscansize\n");
     } else {
-        hex_output = 0;
-        pt         = optget(opts, "vba")->strarg;
+        logg(LOGG_WARNING, "Cannot obtain resource limits for file size\n");
     }
+#endif
 
-    if ((fd = open(pt, O_RDONLY | O_BINARY)) == -1) {
-        mprintf(LOGG_ERROR, "vbadump: Can't open file %s\n", pt);
-        return -1;
-    }
+    options.general |= CL_SCAN_GENERAL_COLLECT_METADATA;
 
-    /* generate the temporary directory */
-    if (!(dir = cli_gentemp(NULL))) {
-        mprintf(LOGG_ERROR, "vbadump: Can't generate temporary name\n");
-        close(fd);
-        return -1;
-    }
+    /*Have the engine unpack everything so that we don't miss anything.  We'll clean it up later.*/
+    options.parse = ~0;
 
-    if (mkdir(dir, 0700)) {
-        mprintf(LOGG_ERROR, "vbadump: Can't create temporary directory %s\n", dir);
-        free(dir);
-        close(fd);
-        return -1;
+    /*Need to explicitly set this to always keep temps, since we are scanning extracted ooxml/ole2 files
+     * from our scan directory to print all the vba content.  Remove it later if leave-temps was not
+     * specified */
+    cl_engine_set_num(engine, CL_ENGINE_KEEPTMP, 1);
+
+    filename = optget(opts, "vba")->strarg;
+    if (NULL == filename) {
+        filename = optget(opts, "vba-hex")->strarg;
     }
-    if (!(ctx = convenience_ctx(fd))) {
-        close(fd);
-        free(dir);
-        return -1;
-    }
-    if (cli_ole2_extract(dir, ctx, &files, &has_vba, &has_xlm, NULL)) {
-        destroy_ctx(ctx);
-        cli_rmdirs(dir);
-        free(dir);
-        close(fd);
-        return -1;
-    }
-    destroy_ctx(ctx);
-    if (has_vba && files)
-        sigtool_vba_scandir(dir, hex_output, files);
-    cli_rmdirs(dir);
-    free(dir);
-    close(fd);
-    return 0;
+    scanfile(filename, engine, opts, &options);
+
+    removeTempDir(opts, engine->tmpdir);
+
+    ret = 0;
+done:
+
+    /* free the engine */
+    cl_engine_free(engine);
+
+    return ret;
 }
 
 static int comparesha(const char *diff)
@@ -1959,7 +2233,7 @@ static int dircopy(const char *src, const char *dest)
     return 0;
 }
 
-static int verifydiff(const char *diff, const char *cvd, const char *incdir)
+static int verifydiff(const struct optstruct *opts, const char *diff, const char *cvd, const char *incdir)
 {
     char *tempdir, cwd[512];
     int ret = 0, fd;
@@ -1974,29 +2248,21 @@ static int verifydiff(const char *diff, const char *cvd, const char *incdir)
         return -1;
     }
 
-    tempdir = cli_gentemp(NULL);
-    if (!tempdir) {
-        mprintf(LOGG_ERROR, "verifydiff: Can't generate temporary name for tempdir\n");
-        return -1;
-    }
-
-    if (mkdir(tempdir, 0700) == -1) {
-        mprintf(LOGG_ERROR, "verifydiff: Can't create directory %s\n", tempdir);
-        free(tempdir);
+    if (!(tempdir = createTempDir(opts))) {
         return -1;
     }
 
     if (cvd) {
-        if (CL_SUCCESS != cl_cvdunpack(cvd, tempdir, false)) {
+        if (CL_SUCCESS != cl_cvdunpack(cvd, tempdir, true)) {
             mprintf(LOGG_ERROR, "verifydiff: Can't unpack CVD file %s\n", cvd);
-            cli_rmdirs(tempdir);
+            removeTempDir(opts, tempdir);
             free(tempdir);
             return -1;
         }
     } else {
         if (dircopy(incdir, tempdir) == -1) {
             mprintf(LOGG_ERROR, "verifydiff: Can't copy dir %s to %s\n", incdir, tempdir);
-            cli_rmdirs(tempdir);
+            removeTempDir(opts, tempdir);
             free(tempdir);
             return -1;
         }
@@ -2004,21 +2270,21 @@ static int verifydiff(const char *diff, const char *cvd, const char *incdir)
 
     if (!getcwd(cwd, sizeof(cwd))) {
         mprintf(LOGG_ERROR, "verifydiff: getcwd() failed\n");
-        cli_rmdirs(tempdir);
+        removeTempDir(opts, tempdir);
         free(tempdir);
         return -1;
     }
 
     if ((fd = open(diff, O_RDONLY | O_BINARY)) == -1) {
         mprintf(LOGG_ERROR, "verifydiff: Can't open diff file %s\n", diff);
-        cli_rmdirs(tempdir);
+        removeTempDir(opts, tempdir);
         free(tempdir);
         return -1;
     }
 
     if (chdir(tempdir) == -1) {
         mprintf(LOGG_ERROR, "verifydiff: Can't chdir to %s\n", tempdir);
-        cli_rmdirs(tempdir);
+        removeTempDir(opts, tempdir);
         free(tempdir);
         close(fd);
         return -1;
@@ -2028,7 +2294,7 @@ static int verifydiff(const char *diff, const char *cvd, const char *incdir)
         mprintf(LOGG_ERROR, "verifydiff: Can't apply %s\n", diff);
         if (chdir(cwd) == -1)
             mprintf(LOGG_WARNING, "verifydiff: Can't chdir to %s\n", cwd);
-        cli_rmdirs(tempdir);
+        removeTempDir(opts, tempdir);
         free(tempdir);
         close(fd);
         return -1;
@@ -2039,7 +2305,7 @@ static int verifydiff(const char *diff, const char *cvd, const char *incdir)
 
     if (chdir(cwd) == -1)
         mprintf(LOGG_WARNING, "verifydiff: Can't chdir to %s\n", cwd);
-    cli_rmdirs(tempdir);
+    removeTempDir(opts, tempdir);
     free(tempdir);
 
     if (!ret) {
@@ -2115,7 +2381,7 @@ static void matchsig(char *sig, const char *offset, int fd)
     ctx.dconf          = (struct cli_dconf *)engine->dconf;
 
     ctx.recursion_stack_size = ctx.engine->max_recursion_level;
-    ctx.recursion_stack      = cli_calloc(sizeof(recursion_level_t), ctx.recursion_stack_size);
+    ctx.recursion_stack      = calloc(sizeof(recursion_level_t), ctx.recursion_stack_size);
     if (!ctx.recursion_stack) {
         goto done;
     }
@@ -2466,12 +2732,13 @@ static int decodehex(const char *hexsig)
     int asterisk = 0;
     unsigned int i, j, hexlen, dlen, parts = 0;
     int mindist = 0, maxdist = 0, error = 0;
+    ssize_t bytes_written;
 
     hexlen = strlen(hexsig);
     if ((wild = strchr(hexsig, '/'))) {
         /* ^offset:trigger-logic/regex/options$ */
         char *trigger, *regex, *regex_end, *cflags;
-        size_t tlen = wild - hexsig, rlen, clen;
+        size_t tlen = wild - hexsig, rlen = 0, clen;
 
         /* check for trigger */
         if (!tlen) {
@@ -2500,7 +2767,7 @@ static int decodehex(const char *hexsig)
         clen = hexlen - tlen - rlen - 2; /* 2 from regex boundaries '/' */
 
         /* get the trigger statement */
-        trigger = cli_calloc(tlen + 1, sizeof(char));
+        trigger = calloc(tlen + 1, sizeof(char));
         if (!trigger) {
             mprintf(LOGG_ERROR, "cannot allocate memory for trigger string\n");
             return -1;
@@ -2509,7 +2776,7 @@ static int decodehex(const char *hexsig)
         trigger[tlen] = '\0';
 
         /* get the regex expression */
-        regex = cli_calloc(rlen + 1, sizeof(char));
+        regex = calloc(rlen + 1, sizeof(char));
         if (!regex) {
             mprintf(LOGG_ERROR, "cannot allocate memory for regex expression\n");
             free(trigger);
@@ -2520,7 +2787,7 @@ static int decodehex(const char *hexsig)
 
         /* get the compile flags */
         if (clen) {
-            cflags = cli_calloc(clen + 1, sizeof(char));
+            cflags = calloc(clen + 1, sizeof(char));
             if (!cflags) {
                 mprintf(LOGG_ERROR, "cannot allocate memory for compile flags\n");
                 free(trigger);
@@ -2536,18 +2803,14 @@ static int decodehex(const char *hexsig)
         /* print components of regex subsig */
         mprintf(LOGG_INFO, "     +-> TRIGGER: %s\n", trigger);
         mprintf(LOGG_INFO, "     +-> REGEX: %s\n", regex);
-        mprintf(LOGG_INFO, "     +-> CFLAGS: %s\n", cflags);
+        mprintf(LOGG_INFO, "     +-> CFLAGS: %s\n", cflags != NULL ? cflags : "null");
 
         free(trigger);
         free(regex);
         if (cflags)
             free(cflags);
-#if HAVE_PCRE
+
         return 0;
-#else
-        mprintf(LOGG_ERROR, "PCRE subsig cannot be loaded without PCRE support\n");
-        return -1;
-#endif
     } else if (strchr(hexsig, '{') || strchr(hexsig, '[')) {
         if (!(hexcpy = strdup(hexsig)))
             return -1;
@@ -2592,7 +2855,10 @@ static int decodehex(const char *hexsig)
                 free(hexcpy);
                 return -1;
             }
-            (void)write(1, decoded, dlen);
+            bytes_written = write(1, decoded, dlen);
+            if (bytes_written != dlen) {
+                mprintf(LOGG_WARNING, "Failed to print all decoded bytes\n");
+            }
             free(decoded);
 
             if (i == parts)
@@ -2673,7 +2939,10 @@ static int decodehex(const char *hexsig)
                 free(pt);
                 return -1;
             }
-            (void)write(1, decoded, dlen);
+            bytes_written = write(1, decoded, dlen);
+            if (bytes_written != dlen) {
+                mprintf(LOGG_WARNING, "Failed to print all decoded bytes\n");
+            }
             free(decoded);
             if (i < parts)
                 mprintf(LOGG_INFO, "{WILDCARD_ANY_STRING}");
@@ -2685,7 +2954,10 @@ static int decodehex(const char *hexsig)
             mprintf(LOGG_ERROR, "Decoding failed\n");
             return -1;
         }
-        (void)write(1, decoded, dlen);
+        bytes_written = write(1, decoded, dlen);
+        if (bytes_written != dlen) {
+            mprintf(LOGG_WARNING, "Failed to print all decoded bytes\n");
+        }
         free(decoded);
     }
 
@@ -3196,45 +3468,25 @@ static int makediff(const struct optstruct *opts)
         return -1;
     }
 
-    odir = cli_gentemp(NULL);
-    if (!odir) {
-        mprintf(LOGG_ERROR, "makediff: Can't generate temporary name for odir\n");
+    if (!(odir = createTempDir(opts))) {
         return -1;
     }
 
-    if (mkdir(odir, 0700) == -1) {
-        mprintf(LOGG_ERROR, "makediff: Can't create directory %s\n", odir);
-        free(odir);
-        return -1;
-    }
-
-    if (CL_SUCCESS != cl_cvdunpack(optget(opts, "diff")->strarg, odir, false)) {
+    if (CL_SUCCESS != cl_cvdunpack(optget(opts, "diff")->strarg, odir, true)) {
         mprintf(LOGG_ERROR, "makediff: Can't unpack CVD file %s\n", optget(opts, "diff")->strarg);
-        cli_rmdirs(odir);
+        removeTempDir(opts, odir);
         free(odir);
         return -1;
     }
 
-    ndir = cli_gentemp(NULL);
-    if (!ndir) {
-        mprintf(LOGG_ERROR, "makediff: Can't generate temporary name for ndir\n");
-        cli_rmdirs(odir);
-        free(odir);
+    if (!(ndir = createTempDir(opts))) {
         return -1;
     }
 
-    if (mkdir(ndir, 0700) == -1) {
-        mprintf(LOGG_ERROR, "makediff: Can't create directory %s\n", ndir);
-        free(ndir);
-        cli_rmdirs(odir);
-        free(odir);
-        return -1;
-    }
-
-    if (CL_SUCCESS != cl_cvdunpack(opts->filename[0], ndir, false)) {
+    if (CL_SUCCESS != cl_cvdunpack(opts->filename[0], ndir, true)) {
         mprintf(LOGG_ERROR, "makediff: Can't unpack CVD file %s\n", opts->filename[0]);
-        cli_rmdirs(odir);
-        cli_rmdirs(ndir);
+        removeTempDir(opts, odir);
+        removeTempDir(opts, ndir);
         free(odir);
         free(ndir);
         return -1;
@@ -3243,15 +3495,15 @@ static int makediff(const struct optstruct *opts)
     snprintf(name, sizeof(name), "%s-%u.script", getdbname(opts->filename[0], dbname, sizeof(dbname)), newver);
     ret = diffdirs(odir, ndir, name);
 
-    cli_rmdirs(odir);
-    cli_rmdirs(ndir);
+    removeTempDir(opts, odir);
+    removeTempDir(opts, ndir);
     free(odir);
     free(ndir);
 
     if (ret == -1)
         return -1;
 
-    if (verifydiff(name, optget(opts, "diff")->strarg, NULL) == -1) {
+    if (verifydiff(opts, name, optget(opts, "diff")->strarg, NULL) == -1) {
         snprintf(broken, sizeof(broken), "%s.broken", name);
         if (rename(name, broken)) {
             unlink(name);
@@ -3336,7 +3588,7 @@ static int dumpcerts(const struct optstruct *opts)
     ctx.dconf          = (struct cli_dconf *)engine->dconf;
 
     ctx.recursion_stack_size = ctx.engine->max_recursion_level;
-    ctx.recursion_stack      = cli_calloc(sizeof(recursion_level_t), ctx.recursion_stack_size);
+    ctx.recursion_stack      = calloc(sizeof(recursion_level_t), ctx.recursion_stack_size);
     if (!ctx.recursion_stack) {
         goto done;
     }
@@ -3397,7 +3649,7 @@ static void help(void)
     mprintf(LOGG_INFO, "\n");
     mprintf(LOGG_INFO, "                      Clam AntiVirus: Signature Tool %s\n", get_version());
     mprintf(LOGG_INFO, "           By The ClamAV Team: https://www.clamav.net/about.html#credits\n");
-    mprintf(LOGG_INFO, "           (C) 2022 Cisco Systems, Inc.\n");
+    mprintf(LOGG_INFO, "           (C) 2024 Cisco Systems, Inc.\n");
     mprintf(LOGG_INFO, "\n");
     mprintf(LOGG_INFO, "    sigtool [options]\n");
     mprintf(LOGG_INFO, "\n");
@@ -3455,6 +3707,8 @@ static void help(void)
     mprintf(LOGG_INFO, "                                           cdiff format\n");
     mprintf(LOGG_INFO, "    --run-cdiff=FILE       -r FILE         Execute update script FILE in cwd\n");
     mprintf(LOGG_INFO, "    --verify-cdiff=DIFF CVD/CLD            Verify DIFF against CVD/CLD\n");
+    mprintf(LOGG_INFO, "    --tempdir=DIRECTORY                    Create temporary files in DIRECTORY\n");
+    mprintf(LOGG_INFO, "    --leave-temps[=yes/no(*)]              Do not remove temporary files\n");
     mprintf(LOGG_INFO, "\n");
 
     return;
@@ -3474,6 +3728,12 @@ int main(int argc, char **argv)
         return -1;
     }
     ret = 1;
+
+    /* Rust logging initialization */
+    if (!clrs_log_init()) {
+        cli_dbgmsg("Unexpected problem occurred while setting up rust logging... continuing without rust logging. \
+                    Please submit an issue to https://github.com/Cisco-Talos/clamav");
+    }
 
     opts = optparse(NULL, argc, argv, 1, OPT_SIGTOOL, 0, NULL);
     if (!opts) {
@@ -3522,9 +3782,15 @@ int main(int argc, char **argv)
         ret = asciinorm(opts);
     else if (optget(opts, "utf16-decode")->enabled)
         ret = utf16decode(opts);
-    else if (optget(opts, "build")->enabled)
+    else if (optget(opts, "build")->enabled) {
         ret = build(opts);
-    else if (optget(opts, "unpack")->enabled)
+        if (ret == CL_ELAST_ERROR) {
+            // build() returns CL_ELAST_ERROR the hash starts with 00. This will fail to verify with ClamAV 1.1 -> 1.4.
+            // Retry the build again to get new hashes.
+            mprintf(LOGG_WARNING, "Retrying the build for a chance at a better hash.\n");
+            ret = build(opts);
+        }
+    } else if (optget(opts, "unpack")->enabled)
         ret = unpack(opts);
     else if (optget(opts, "unpack-current")->enabled)
         ret = unpack(opts);
@@ -3558,9 +3824,9 @@ int main(int argc, char **argv)
                 ret = -1;
             } else {
                 if (S_ISDIR(sb.st_mode))
-                    ret = verifydiff(optget(opts, "verify-cdiff")->strarg, NULL, opts->filename[0]);
+                    ret = verifydiff(opts, optget(opts, "verify-cdiff")->strarg, NULL, opts->filename[0]);
                 else
-                    ret = verifydiff(optget(opts, "verify-cdiff")->strarg, opts->filename[0], NULL);
+                    ret = verifydiff(opts, optget(opts, "verify-cdiff")->strarg, opts->filename[0], NULL);
             }
         }
     } else

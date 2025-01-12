@@ -1,7 +1,7 @@
 /*
  *  Detect environment for bytecode.
  *
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2009-2013 Sourcefire, Inc.
  *
  *  Authors: Török Edvin
@@ -41,7 +41,7 @@
 #define CHECK_ARCH(a) \
     if (!strcmp(TARGET_ARCH_TYPE, #a)) env->arch = arch_##a
 
-extern bool have_clamjit();
+extern bool have_clamjit(void);
 
 static void cli_print_environment(struct cli_environment *env)
 {

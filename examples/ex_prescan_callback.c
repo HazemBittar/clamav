@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2020 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2020-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -76,7 +76,7 @@ int main(int argc, char **argv)
     long double mb;
     const char *virname;
     const char *filename;
-    struct cl_engine *engine;
+    struct cl_engine *engine = NULL;
     struct cl_scan_options options;
 
     if (argc != 2) {

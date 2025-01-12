@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2007-2013 Sourcefire, Inc.
  *
  *  Authors: Tomasz Kojm, Trog, Török Edvin
@@ -50,6 +50,7 @@
 #include "clamav.h"
 #include "others.h"
 #include "readdb.h"
+#include "default.h"
 
 // common
 #include "output.h"
@@ -404,7 +405,7 @@ static cl_error_t reload_db(struct cl_engine **engine, unsigned int dboptions, c
                 goto done;
 
             default:
-                logg(LOGG_ERROR, "An unknown error occured when waiting for the database reload thread: %d\n", join_ret);
+                logg(LOGG_ERROR, "An unknown error occurred when waiting for the database reload thread: %d\n", join_ret);
                 goto done;
         }
     }
@@ -926,7 +927,7 @@ int recvloop(int *socketds, unsigned nsockets, struct cl_engine *engine, unsigne
     memset(&sigact, 0, sizeof(struct sigaction));
 #endif
 
-    /* Initalize scan options struct */
+    /* Initialize scan options struct */
     memset(&options, 0, sizeof(struct cl_scan_options));
 
     /* set up limits */
@@ -981,6 +982,12 @@ int recvloop(int *socketds, unsigned nsockets, struct cl_engine *engine, unsigne
 #endif
 
     if ((opt = optget(opts, "MaxRecursion"))->active) {
+        if ((0 == opt->numarg) || (opt->numarg > CLI_MAX_MAXRECLEVEL)) {
+            logg(LOGG_ERROR, "MaxRecursion set to %zu, but cannot be larger than %u, and cannot be 0.\n",
+                 (size_t)opt->numarg, CLI_MAX_MAXRECLEVEL);
+            cl_engine_free(engine);
+            return 1;
+        }
         if ((ret = cl_engine_set_num(engine, CL_ENGINE_MAX_RECURSION, opt->numarg))) {
             logg(LOGG_ERROR, "cl_engine_set_num(CL_ENGINE_MAX_RECURSION) failed: %s\n", cl_strerror(ret));
             cl_engine_free(engine);
@@ -1118,6 +1125,20 @@ int recvloop(int *socketds, unsigned nsockets, struct cl_engine *engine, unsigne
         logg(LOGG_INFO, "Archive support disabled.\n");
     }
 
+    if (optget(opts, "ScanImage")->enabled) {
+        logg(LOGG_INFO, "Image (graphics) scanning support enabled.\n");
+        options.parse |= CL_SCAN_PARSE_IMAGE;
+    } else {
+        logg(LOGG_INFO, "Image (graphics) scanning support disabled.\n");
+    }
+
+    if (optget(opts, "ScanImageFuzzyHash")->enabled) {
+        logg(LOGG_INFO, "Detection using image fuzzy hash enabled.\n");
+        options.parse |= CL_SCAN_PARSE_IMAGE_FUZZY_HASH;
+    } else {
+        logg(LOGG_INFO, "Detection using image fuzzy hash disabled.\n");
+    }
+
     /* TODO: Remove deprecated option in a future feature release. */
     if (optget(opts, "ArchiveBlockEncrypted")->enabled) {
         if (options.parse & CL_SCAN_PARSE_ARCHIVE) {
@@ -1216,7 +1237,7 @@ int recvloop(int *socketds, unsigned nsockets, struct cl_engine *engine, unsigne
 
     if (optget(opts, "AlertBrokenMedia")->enabled) {
         options.heuristic |= CL_SCAN_HEURISTIC_BROKEN_MEDIA;
-        logg(LOGG_INFO, "Media (Graphics) Format Validatation enabled\n");
+        logg(LOGG_INFO, "Media (Graphics) Format Validation enabled\n");
     }
 
     if (optget(opts, "ScanMail")->enabled) {
@@ -1291,6 +1312,13 @@ int recvloop(int *socketds, unsigned nsockets, struct cl_engine *engine, unsigne
         logg(LOGG_INFO, "HWP3 support disabled.\n");
     }
 
+    if (optget(opts, "ScanOneNote")->enabled) {
+        logg(LOGG_INFO, "OneNote support enabled.\n");
+        options.parse |= CL_SCAN_PARSE_ONENOTE;
+    } else {
+        logg(LOGG_INFO, "OneNote support disabled.\n");
+    }
+
     if (optget(opts, "PhishingScanURLs")->enabled) {
         /* TODO: Remove deprecated option in a future feature release */
         if ((optget(opts, "PhishingAlwaysBlockCloak")->enabled) ||
@@ -1356,17 +1384,9 @@ int recvloop(int *socketds, unsigned nsockets, struct cl_engine *engine, unsigne
         options.dev |= CL_SCAN_DEV_COLLECT_SHA;
 #endif
 
-#if HAVE_JSON
     /* JSON check to prevent engine loading if specified without libjson-c */
     if (optget(opts, "GenerateMetadataJson")->enabled)
         options.general |= CL_SCAN_GENERAL_COLLECT_METADATA;
-#else
-    if (optget(opts, "GenerateMetadataJson")->enabled) {
-        logg(LOGG_ERROR, "Can't generate json (gen-json). libjson-c dev library was missing or misconfigured when ClamAV was built.\n");
-        cl_engine_free(engine);
-        return 1;
-    }
-#endif
 
     selfchk = optget(opts, "SelfCheck")->numarg;
     if (!selfchk) {

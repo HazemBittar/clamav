@@ -1,7 +1,7 @@
 /*
  *  JIT compile ClamAV bytecode.
  *
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2009-2013 Sourcefire, Inc.
  *
  *  Authors: Török Edvin, Andy Ragusa
@@ -106,7 +106,7 @@ void LLVMInitializePowerPCAsmPrinter();
 
 #include "llvm/IR/Dominators.h"
 
-//#define TIMING
+// #define TIMING
 #undef TIMING
 
 #include "llvm/Config/llvm-config.h"
@@ -986,12 +986,19 @@ class LLVMCodegen
             Value *idxs[1] = {
                 ConstantInt::get(Type::getInt64Ty(Context), components[c++])};
             unsigned idx = components[c++];
-            if (!idx)
+            if (!idx) {
                 return ConstantPointerNull::get(PTy);
+            }
+            if (idx >= globals.size()) {
+                return ConstantPointerNull::get(PTy);
+            }
             assert(idx < globals.size());
-            GlobalVariable *GV = cast<GlobalVariable>(globals[idx]);
-            Type *IP8Ty        = PointerType::getUnqual(Type::getInt8Ty(Ty->getContext()));
-            Constant *C        = ConstantExpr::getPointerCast(GV, IP8Ty);
+            GlobalVariable *GV = dyn_cast<GlobalVariable>(globals[idx]);
+            if (nullptr == GV) {
+                return ConstantPointerNull::get(PTy);
+            }
+            Type *IP8Ty = PointerType::getUnqual(Type::getInt8Ty(Ty->getContext()));
+            Constant *C = ConstantExpr::getPointerCast(GV, IP8Ty);
             // TODO: check constant bounds here
             return ConstantExpr::getPointerCast(
                 ConstantExpr::getInBoundsGetElementPtr(C->getType(), C, idxs),
@@ -1966,7 +1973,7 @@ static void *bytecode_watchdog(void *arg)
     } while (1);
     watchdog_running = 0;
     if (cli_debug_flag)
-        cli_dbgmsg_no_inline("bytecode watchdog quiting\n");
+        cli_dbgmsg_no_inline("bytecode watchdog quitting\n");
     pthread_mutex_unlock(&watchdog_mutex);
     return NULL;
 }

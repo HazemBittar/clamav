@@ -8,7 +8,7 @@
  *
  ********************************/
 
-#define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE
 #include <unistd.h>
 #include <signal.h>
 #include <stdio.h>
@@ -207,7 +207,7 @@ void thpool_wait(thpool_* thpool_p){
 
 /* Destroy the threadpool */
 void thpool_destroy(thpool_* thpool_p){
-	/* No need to destory if it's NULL */
+	/* No need to destroy if it's NULL */
 	if (thpool_p == NULL) return ;
 
 	volatile int threads_total = thpool_p->num_threads_alive;
@@ -256,7 +256,7 @@ void thpool_pause(thpool_* thpool_p) {
 /* Resume all threads in threadpool */
 void thpool_resume(thpool_* thpool_p) {
     // resuming a single threadpool hasn't been
-    // implemented yet, meanwhile this supresses
+    // implemented yet, meanwhile this suppresses
     // the warnings
     (void)thpool_p;
 
@@ -310,7 +310,7 @@ static void thread_hold(int sig_id) {
 
 /* What each thread is doing
 *
-* In principle this is an endless loop. The only time this loop gets interuppted is once
+* In principle this is an endless loop. The only time this loop gets interrupted is once
 * thpool_destroy() is invoked or the program exits.
 *
 * @param  thread        thread that will run this function
@@ -318,7 +318,7 @@ static void thread_hold(int sig_id) {
 */
 static void* thread_do(struct thread* thread_p){
 
-	/* Set thread name for profiling and debuging */
+	/* Set thread name for profiling and debugging */
 	char thread_name[32] = {0};
 	snprintf(thread_name, 32, "thread-pool-%d", thread_p->id);
 
@@ -471,14 +471,14 @@ static struct job* jobqueue_pull(jobqueue* jobqueue_p){
 		  			break;
 
 		case 1:  /* if one job in queue */
-					logg(LOGG_DEBUG_NV, "jobqueue_pull: Thread %d pulled last job from queue.\n", syscall(SYS_gettid));
+					logg(LOGG_DEBUG_NV, "jobqueue_pull: Thread %ld pulled last job from queue.\n", syscall(SYS_gettid));
 					jobqueue_p->front = NULL;
 					jobqueue_p->rear  = NULL;
 					jobqueue_p->len = 0;
 					break;
 
 		default: /* if >1 jobs in queue */
-					logg(LOGG_DEBUG_NV, "jobqueue_pull: Thread %d pulled a job from queue.\n", syscall(SYS_gettid));
+					logg(LOGG_DEBUG_NV, "jobqueue_pull: Thread %ld pulled a job from queue.\n", syscall(SYS_gettid));
 					jobqueue_p->front = job_p->prev;
 					jobqueue_p->len--;
 					/* more than one job in queue -> post it */

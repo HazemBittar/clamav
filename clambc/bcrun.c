@@ -1,7 +1,7 @@
 /*
  *  ClamAV bytecode handler tool.
  *
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2009-2013 Sourcefire, Inc.
  *
  *  Authors: Török Edvin
@@ -53,7 +53,7 @@ static void help(void)
     printf("\n");
     printf("                       Clam AntiVirus: Bytecode Testing Tool %s\n", get_version());
     printf("           By The ClamAV Team: https://www.clamav.net/about.html#credits\n");
-    printf("           (C) 2022 Cisco Systems, Inc.\n");
+    printf("           (C) 2024 Cisco Systems, Inc.\n");
     printf("\n");
     printf("    clambc <file> [function] [param1 ...]\n");
     printf("\n");
@@ -399,7 +399,7 @@ int main(int argc, char *argv[])
         cctx.evidence = evidence_new();
 
         cctx.recursion_stack_size = cctx.engine->max_recursion_level;
-        cctx.recursion_stack      = cli_calloc(sizeof(recursion_level_t), cctx.recursion_stack_size);
+        cctx.recursion_stack      = calloc(sizeof(recursion_level_t), cctx.recursion_stack_size);
         if (!cctx.recursion_stack) {
             fprintf(stderr, "Out of memory\n");
             exit(3);

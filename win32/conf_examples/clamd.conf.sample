@@ -60,7 +60,7 @@ Example
 #ExtendedDetectionInfo yes
 
 # This option allows you to save a process identifier of the listening
-# daemon (main thread).
+# daemon.
 # Default: disabled
 #PidFile "C:\Program Files\ClamAV\clamd.pid"
 
@@ -75,6 +75,11 @@ Example
 # Only load the official signatures published by the ClamAV project.
 # Default: no
 #OfficialDatabaseOnly no
+
+# Return with a nonzero error code if the virus database is older than
+# the specified number of days.
+# Default: -1
+#FailIfCvdOlderThan 7
 
 # The daemon on Windows only supports unsecured TCP sockets.
 # Due to security reasons make sure that your IP & port is not
@@ -166,7 +171,7 @@ TCPAddr localhost
 
 # Scan files and directories on other filesystems.
 # Default: yes
-#CrossFilesystems yes
+#CrossFilesystems no
 
 # Perform a database check.
 # Default: 600 (10 min)
@@ -182,12 +187,18 @@ TCPAddr localhost
 # Default: yes
 #ConcurrentDatabaseReload no
 
-# Execute a command when virus is found. In the command string %v will
-# be replaced with the virus name and %f will be replaced with the file name.
-# Additionally, two environment variables will be defined: $CLAM_VIRUSEVENT_FILENAME
-# and $CLAM_VIRUSEVENT_VIRUSNAME.
+# Execute a command when virus is found.
+# Use the following environment variables to identify the file and virus names:
+# - $CLAM_VIRUSEVENT_FILENAME
+# - $CLAM_VIRUSEVENT_VIRUSNAME
+# In the command string, '%v' will also be replaced with the virus name.
+# Note: The '%f' filename format character has been disabled and will no longer
+# be replaced with the file name, due to command injection security concerns.
+# Use the 'CLAM_VIRUSEVENT_FILENAME' environment variable instead.
+# For the same reason, you should NOT use the environment variables in the
+# command directly, but should use it carefully from your executed script.
 # Default: no
-#VirusEvent "C:\example\SendEmail.ps1" email@addresscom "VIRUS ALERT: %v in %f"
+#VirusEvent "C:\example\SendVirusAlertEmail.ps1"
 
 # Run as another user (clamd must be started by root for this option to work)
 # Default: don't drop privileges
@@ -214,6 +225,12 @@ TCPAddr localhost
 # A metadata.json file will be written to the scan temp directory if LeaveTemporaryFiles is enabled.
 # Default: no
 #GenerateMetadataJson yes
+
+# Store URLs found in html files to the json metadata.
+# URLs will be stored in an array with the tag 'HTMLUrls'
+# GenerateMetadataJson is required for this feature.
+# Default: yes (if GenerateMetadataJson is used)
+#JsonStoreHTMLUrls no
 
 # Permit use of the ALLMATCHSCAN command. If set to no, clamd will reject
 # any ALLMATCHSCAN command as invalid.
@@ -250,12 +267,17 @@ TCPAddr localhost
 # Default: no
 #DisableCache yes
 
+# This option allows you to set the number of entries the cache can store.
+# The value should be a square number or will be rounded up to the nearest
+# square number.
+#CacheSize 65536
+
 # In some cases (eg. complex malware, exploits in graphic files, and others),
 # ClamAV uses special algorithms to detect abnormal patterns and behaviors that
 # may be malicious.  This option enables alerting on such heuristically
 # detected potential threats.
 # Default: yes
-#HeuristicAlerts yes
+#HeuristicAlerts no
 
 # Allow heuristic alerts to take precedence.
 # When enabled, if a heuristic scan (such as phishingScan) detects
@@ -333,7 +355,7 @@ TCPAddr localhost
 # and Petite. If you turn off this option, the original files will still be
 # scanned, but without additional processing.
 # Default: yes
-#ScanPE yes
+#ScanPE no
 
 # Certain PE files contain an authenticode signature. By default, we check
 # the signature chain in the PE file against a database of trusted and
@@ -350,7 +372,7 @@ TCPAddr localhost
 # If you turn off this option, the original files will still be scanned, but
 # without additional processing.
 # Default: yes
-#ScanELF yes
+#ScanELF no
 
 
 ##
@@ -362,31 +384,56 @@ TCPAddr localhost
 # If you turn off this option, the original files will still be scanned, but
 # without additional processing.
 # Default: yes
-#ScanOLE2 yes
+#ScanOLE2 no
 
 # This option enables scanning within PDF files.
 # If you turn off this option, the original files will still be scanned, but
 # without decoding and additional processing.
 # Default: yes
-#ScanPDF yes
+#ScanPDF no
 
 # This option enables scanning within SWF files.
 # If you turn off this option, the original files will still be scanned, but
 # without decoding and additional processing.
 # Default: yes
-#ScanSWF yes
+#ScanSWF no
 
 # This option enables scanning xml-based document files supported by libclamav.
 # If you turn off this option, the original files will still be scanned, but
 # without additional processing.
 # Default: yes
-#ScanXMLDOCS yes
+#ScanXMLDOCS no
 
 # This option enables scanning of HWP3 files.
 # If you turn off this option, the original files will still be scanned, but
 # without additional processing.
 # Default: yes
-#ScanHWP3 yes
+#ScanHWP3 no
+
+# This option enables scanning of OneNote files.
+# If you turn off this option, the original files will still be scanned, but
+# without additional processing.
+# Default: yes
+#ScanOneNote no
+
+
+##
+## Other file types
+##
+
+# This option enables scanning of image (graphics).
+# If you turn off this option, the original files will still be scanned, but
+# without additional processing.
+# Default: yes
+#ScanImage no
+
+# This option enables detection by calculating a fuzzy hash of image (graphics)
+# files.
+# Signatures using image fuzzy hashes typically match files and documents by
+# identifying images embedded or attached to those files.
+# If you turn off this option, then some files may no longer be detected.
+# Default: yes
+#ScanImageFuzzyHash no
 
 
 ##
@@ -397,7 +444,7 @@ TCPAddr localhost
 # If you turn off this option, the original files will still be scanned, but
 # without parsing individual messages/attachments.
 # Default: yes
-#ScanMail yes
+#ScanMail no
 
 # Scan RFC1341 messages split over many emails.
 # You will need to periodically clean up $TemporaryDirectory/clamav-partial
@@ -444,7 +491,7 @@ TCPAddr localhost
 # With this option enabled the DLP module will search for valid
 # SSNs formatted as xxx-yy-zzzz
 # Default: yes
-#StructuredSSNFormatNormal yes
+#StructuredSSNFormatNormal no
 
 # With this option enabled the DLP module will search for valid
 # SSNs formatted as xxxyyzzzz
@@ -460,7 +507,7 @@ TCPAddr localhost
 # Default: yes
 # If you turn off this option, the original files will still be scanned, but
 # without additional processing.
-#ScanHTML yes
+#ScanHTML no
 
 
 ##
@@ -471,7 +518,7 @@ TCPAddr localhost
 # If you turn off this option, the original files will still be scanned, but
 # without unpacking and additional processing.
 # Default: yes
-#ScanArchive yes
+#ScanArchive no
 
 
 ##
@@ -516,6 +563,7 @@ TCPAddr localhost
 # deeply the process should be continued.
 # Note: setting this limit too high may result in severe damage to the system.
 # Default: 17
+# Maximum: 100
 #MaxRecursion 10
 
 # Number of files to be scanned within an archive, a document, or any other
@@ -635,7 +683,7 @@ TCPAddr localhost
 # It is highly recommended you keep this option on, otherwise you'll miss
 # detections for many new viruses.
 # Default: yes
-#Bytecode yes
+#Bytecode no
 
 # Set bytecode security level.
 # Possible values:

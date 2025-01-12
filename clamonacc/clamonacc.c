@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2019-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2019-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *
  *  Authors: Mickey Sola
  *
@@ -61,15 +61,15 @@
 pthread_t ddd_pid        = 0;
 pthread_t scan_queue_pid = 0;
 
-static void onas_handle_signals();
+static void onas_handle_signals(void);
 static int startup_checks(struct onas_context *ctx);
 static struct onas_context *g_ctx = NULL;
 
 static void onas_clamonacc_exit(int sig)
 {
-    logg(LOGG_DEBUG, "Clamonacc: onas_clamonacc_exit(), signal %d\n", sig);
+    mprintf(LOGG_DEBUG, "Clamonacc: onas_clamonacc_exit(), signal %d\n", sig);
     if (sig == 11) {
-        logg(LOGG_ERROR, "Clamonacc: clamonacc has experienced a fatal error, if you continue to see this error, please run clamonacc with --verbose and report the issue and crash report to the developers\n");
+        mprintf(LOGG_ERROR, "Clamonacc: clamonacc has experienced a fatal error, if you continue to see this error, please run clamonacc with --verbose and report the issue and crash report to the developers\n");
     }
 
     if (g_ctx) {
@@ -79,21 +79,21 @@ static void onas_clamonacc_exit(int sig)
         g_ctx->fan_fd = 0;
     }
 
-    logg(LOGG_DEBUG, "Clamonacc: attempting to stop ddd thread ... \n");
+    mprintf(LOGG_DEBUG, "Clamonacc: attempting to stop ddd thread ... \n");
     if (ddd_pid > 0) {
         pthread_cancel(ddd_pid);
         pthread_join(ddd_pid, NULL);
     }
     ddd_pid = 0;
 
-    logg(LOGG_DEBUG, "Clamonacc: attempting to stop event consumer thread ...\n");
+    mprintf(LOGG_DEBUG, "Clamonacc: attempting to stop event consumer thread ...\n");
     if (scan_queue_pid > 0) {
         pthread_cancel(scan_queue_pid);
         pthread_join(scan_queue_pid, NULL);
     }
     scan_queue_pid = 0;
 
-    logg(LOGG_INFO, "Clamonacc: stopped\n");
+    mprintf(LOGG_INFO, "Clamonacc: stopped\n");
     onas_cleanup(g_ctx);
     pthread_exit(NULL);
 }
@@ -101,6 +101,7 @@ static void onas_clamonacc_exit(int sig)
 int main(int argc, char **argv)
 {
     const struct optstruct *opts;
+    const struct optstruct *opt;
     const struct optstruct *clamdopts;
     struct onas_context *ctx;
     int ret = 0;
@@ -108,17 +109,29 @@ int main(int argc, char **argv)
     /* Initialize context */
     ctx = onas_init_context();
     if (ctx == NULL) {
-        logg(LOGG_ERROR, "Clamonacc: can't initialize context\n");
+        mprintf(LOGG_ERROR, "Clamonacc: can't initialize context\n");
         return 2;
     }
 
     /* Parse out all our command line options */
     opts = optparse(NULL, argc, argv, 1, OPT_CLAMONACC, OPT_CLAMSCAN, NULL);
     if (opts == NULL) {
-        logg(LOGG_ERROR, "Clamonacc: can't parse command line options\n");
+        mprintf(LOGG_ERROR, "Clamonacc: can't parse command line options\n");
         return 2;
     }
     ctx->opts = opts;
+
+    /* initialize logger */
+
+    if ((opt = optget(opts, "log"))->enabled) {
+        logg_file = opt->strarg;
+        if (logg(LOGG_INFO, "--------------------------------------\n")) {
+            mprintf(LOGG_ERROR, "ClamClient: problem with internal logger\n");
+            return CL_EARG;
+        }
+    } else {
+        logg_file = NULL;
+    }
 
     if (optget(opts, "verbose")->enabled) {
         mprintf_verbose = 1;
@@ -247,7 +260,7 @@ done:
     exit(ret);
 }
 
-static void onas_handle_signals()
+static void onas_handle_signals(void)
 {
     sigset_t sigset;
     struct sigaction act;
@@ -278,7 +291,7 @@ static void onas_handle_signals()
 
 struct onas_context *onas_init_context(void)
 {
-    struct onas_context *ctx = (struct onas_context *)cli_malloc(sizeof(struct onas_context));
+    struct onas_context *ctx = (struct onas_context *)malloc(sizeof(struct onas_context));
     if (NULL == ctx) {
         return NULL;
     }
@@ -423,7 +436,7 @@ void help(void)
     mprintf(LOGG_INFO, "\n");
     mprintf(LOGG_INFO, "           ClamAV: On Access Scanning Application and Client %s\n", get_version());
     mprintf(LOGG_INFO, "           By The ClamAV Team: https://www.clamav.net/about.html#credits\n");
-    mprintf(LOGG_INFO, "           (C) 2022 Cisco Systems, Inc.\n");
+    mprintf(LOGG_INFO, "           (C) 2024 Cisco Systems, Inc.\n");
     mprintf(LOGG_INFO, "\n");
     mprintf(LOGG_INFO, "    clamonacc [options] [file/directory/-]\n");
     mprintf(LOGG_INFO, "\n");

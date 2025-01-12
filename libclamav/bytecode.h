@@ -1,7 +1,7 @@
 /*
  *  Load, verify and execute ClamAV bytecode.
  *
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2009-2013 Sourcefire, Inc.
  *
  *  Authors: Török Edvin
@@ -106,7 +106,7 @@ void cli_bytecode_context_destroy(struct cli_bc_ctx *ctx);
 #ifdef __cplusplus
 extern "C" {
 #endif
-extern LIBCLAMAV_EXPORT bool have_clamjit();
+extern LIBCLAMAV_EXPORT bool have_clamjit(void);
 #ifdef __cplusplus
 }
 #endif

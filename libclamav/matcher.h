@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2007-2013 Sourcefire, Inc.
  *
  *  Authors: Tomasz Kojm
@@ -158,11 +158,9 @@ struct cli_matcher {
     uint8_t ac_only;
 
     /* Perl-Compiled Regular Expressions */
-#if HAVE_PCRE
     uint32_t pcre_metas;
     struct cli_pcre_meta **pcre_metatable;
     uint32_t pcre_reloff_num, pcre_absoff_num;
-#endif
 
     /* Byte Compare */
     uint32_t bcomp_metas;
@@ -292,7 +290,7 @@ static const struct cli_mtarget cli_mtargets[CLI_MTARGETS] = {
  * @param offset            Offset into the buffer from which to start matching.
  * @param ctx               The scanning context.
  * @param ftype             If specified, may limit signature matching trie by target type corresponding with the specified CL_TYPE
- * @param[in,out] acdata    (optional) A list of pattern maching data structs to contain match results, one for generic signatures and one for target-specific signatures.
+ * @param[in,out] acdata    (optional) A list of pattern matching data structs to contain match results, one for generic signatures and one for target-specific signatures.
  *                          If not provided, the matcher results are lost, outside of this function's return value.
  *                          Required if you want to evaluate logical expressions afterwards.
  * @return cl_error_t
@@ -366,7 +364,7 @@ cl_error_t cli_exp_eval(cli_ctx *ctx, struct cli_matcher *root, struct cli_ac_da
 cl_error_t cli_caloff(const char *offstr, const struct cli_target_info *info, unsigned int target, uint32_t *offdata, uint32_t *offset_min, uint32_t *offset_max);
 
 /**
- * @brief Determine if an alert is a known false positive, using each fmap in the the ctx->container stack to check MD5, SHA1, and SHA256 hashes.
+ * @brief Determine if an alert is a known false positive, using each fmap in the ctx->container stack to check MD5, SHA1, and SHA256 hashes.
  *
  * @param ctx           The scanning context.
  * @param vname         (Optional) The name of the signature alert.
@@ -375,7 +373,7 @@ cl_error_t cli_caloff(const char *offstr, const struct cli_target_info *info, un
  */
 cl_error_t cli_check_fp(cli_ctx *ctx, const char *vname);
 
-cl_error_t cli_matchmeta(cli_ctx *ctx, const char *fname, size_t fsizec, size_t fsizer, int encrypted, unsigned int filepos, int res1, void *res2);
+cl_error_t cli_matchmeta(cli_ctx *ctx, const char *fname, size_t fsizec, size_t fsizer, int encrypted, unsigned int filepos, int res1);
 
 /** Parse the executable headers and, if successful, populate exeinfo
  *

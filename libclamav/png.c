@@ -1,5 +1,5 @@
 /*
- *   Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *   Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *   Copyright (C) 2011-2013 Sourcefire, Inc.
  *   Copyright (C) 1995-2007 by Alexander Lehmann <lehmann@usa.net>,
  *                              Andreas Dilger <adilger@enel.ucalgary.ca>,
@@ -137,7 +137,7 @@ cl_error_t cli_parsepng(cli_ctx *ctx)
         if (chunk_data_length > 0) {
             ptr = (uint8_t *)fmap_need_off_once(map, offset, chunk_data_length);
             if (NULL == ptr) {
-                cli_warnmsg("PNG: Unexpected early end-of-file.\n");
+                cli_dbgmsg("PNG: Unexpected early end-of-file.\n");
                 if (SCAN_HEURISTIC_BROKEN_MEDIA) {
                     status = cli_append_potentially_unwanted(ctx, "Heuristics.Broken.Media.PNG.EOFReadingChunk");
                 }
@@ -257,13 +257,6 @@ cl_error_t cli_parsepng(cli_ctx *ctx)
             /*------*
              | tRNS |
              *------*/
-
-            if (color_type == 3) {
-                if ((chunk_data_length > 256 || chunk_data_length > num_palette_entries) && !have_PLTE) {
-                    status = cli_append_potentially_unwanted(ctx, "Heuristics.PNG.CVE-2004-0597");
-                    goto done; // always, even if allmatch mode means status comes back 'success' instead of 'virus'.
-                }
-            }
         }
 
         if (fmap_readn(map, &chunk_crc, offset, PNG_CHUNK_CRC_SIZE) != PNG_CHUNK_CRC_SIZE) {

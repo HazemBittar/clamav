@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2016-2022 Cisco and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2016-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *
  *  Author: Kevin Lin
  *
@@ -78,7 +78,6 @@ struct pdf_token {
 };
 
 static size_t pdf_decodestream_internal(struct pdf_struct *pdf, struct pdf_obj *obj, struct pdf_dict *params, struct pdf_token *token, int fout, cl_error_t *status, struct objstm_struct *objstm);
-static cl_error_t pdf_decode_dump(struct pdf_struct *pdf, struct pdf_obj *obj, struct pdf_token *token, uint32_t lvl);
 
 static cl_error_t filter_ascii85decode(struct pdf_struct *pdf, struct pdf_obj *obj, struct pdf_token *token);
 static cl_error_t filter_rldecode(struct pdf_struct *pdf, struct pdf_obj *obj, struct pdf_token *token);
@@ -99,7 +98,7 @@ static cl_error_t filter_lzwdecode(struct pdf_struct *pdf, struct pdf_obj *obj, 
  * @param stream    Filter stream buffer pointer.
  * @param streamlen Length of filter stream buffer.
  * @param xref      Indicates if the stream is an /XRef stream.  Do not apply forced decryption on /XRef streams.
- * @param fout      File descriptor to write to to be scanned.
+ * @param fout      File descriptor to write to be scanned.
  * @param[out] rc   Return code ()
  * @param objstm    (optional) Object stream context structure.
  * @return size_t   The number of bytes written to 'fout' to be scanned.
@@ -136,7 +135,7 @@ size_t pdf_decodestream(
         pdf_print_dict(params, 0);
 #endif
 
-    token = cli_malloc(sizeof(struct pdf_token));
+    token = malloc(sizeof(struct pdf_token));
     if (!token) {
         *status = CL_EMEM;
         goto done;
@@ -148,7 +147,7 @@ size_t pdf_decodestream(
 
     token->success = 0;
 
-    token->content = cli_malloc(streamlen);
+    token->content = cli_max_malloc(streamlen);
     if (!token->content) {
         *status = CL_EMEM;
         goto done;
@@ -212,7 +211,7 @@ done:
  * @param obj           The object we found the filter content in.
  * @param params        (optional) Dictionary parameters describing the filter data.
  * @param token         Pointer to and length of filter data.
- * @param fout          File handle to write data to to be scanned.
+ * @param fout          File handle to write data to be scanned.
  * @param[out] status   CL_CLEAN/CL_SUCCESS or CL_VIRUS/CL_E<error>
  * @param objstm        (optional) Object stream context structure.
  * @return ptrdiff_t    The number of bytes we wrote to 'fout'. -1 if failed out.
@@ -338,13 +337,6 @@ static size_t pdf_decodestream_internal(
             break;
         }
         token->success++;
-
-        /* Dump the stream content to a text file if keeptmp is enabled. */
-        if (pdf->ctx->engine->keeptmp) {
-            if (CL_SUCCESS != pdf_decode_dump(pdf, obj, token, i + 1)) {
-                cli_errmsg("pdf_decodestream_internal: failed to write decoded stream content to temp file\n");
-            }
-        }
     }
 
     if ((token->success > 0) && (NULL != token->content)) {
@@ -399,45 +391,6 @@ done:
     return bytes_scanned;
 }
 
-/**
- * @brief   Dump PDF filter content such as stream contents to a temp file.
- *
- * Temp file is created in the pdf->dir directory.
- * Filename format is "pdf<pdf->files-1>_<lvl>".
- *
- * @param pdf   Pdf context structure.
- * @param obj   The object we found the filter content in.
- * @param token The struct for the filter contents.
- * @param lvl   A unique index to distinguish the files from each other.
- * @return cl_error_t
- */
-static cl_error_t pdf_decode_dump(struct pdf_struct *pdf, struct pdf_obj *obj, struct pdf_token *token, uint32_t lvl)
-{
-    char fname[1024];
-    int ifd;
-
-    snprintf(fname, sizeof(fname), "%s" PATHSEP "pdf%02u_%02u", pdf->dir, (pdf->files - 1), lvl);
-    ifd = open(fname, O_RDWR | O_CREAT | O_EXCL | O_TRUNC | O_BINARY, 0600);
-    if (ifd < 0) {
-        char err[128];
-
-        cli_errmsg("cli_pdf: can't create intermediate temporary file %s: %s\n", fname, cli_strerror(errno, err, sizeof(err)));
-        return CL_ETMPFILE;
-    }
-
-    cli_dbgmsg("cli_pdf: decoded filter %u obj %u %u\n", lvl, obj->id >> 8, obj->id & 0xff);
-    cli_dbgmsg("         ... to %s\n", fname);
-
-    if (cli_writen(ifd, token->content, token->length) != token->length) {
-        cli_errmsg("cli_pdf: failed to write output file\n");
-        close(ifd);
-        return CL_EWRITE;
-    }
-
-    close(ifd);
-    return CL_SUCCESS;
-}
-
 /*
  * ascii85 inflation
  * See http://www.piclist.com/techref/method/encode.htm (look for base85)
@@ -453,7 +406,7 @@ static cl_error_t filter_ascii85decode(struct pdf_struct *pdf, struct pdf_obj *o
     uint64_t sum = 0;
 
     /* 5:4 decoding ratio, with 1:4 expansion sequences => (4*length)+1 */
-    if (!(dptr = decoded = (uint8_t *)cli_malloc((4 * remaining) + 1))) {
+    if (!(dptr = decoded = (uint8_t *)cli_max_malloc((4 * remaining) + 1))) {
         cli_errmsg("cli_pdf: cannot allocate memory for decoded output\n");
         return CL_EMEM;
     }
@@ -558,7 +511,7 @@ static cl_error_t filter_rldecode(struct pdf_struct *pdf, struct pdf_obj *obj, s
 
     capacity = INFLATE_CHUNK_SIZE;
 
-    if (!(decoded = (uint8_t *)cli_malloc(capacity))) {
+    if (!(decoded = (uint8_t *)malloc(capacity))) {
         cli_errmsg("cli_pdf: cannot allocate memory for decoded output\n");
         return CL_EMEM;
     }
@@ -578,7 +531,7 @@ static cl_error_t filter_rldecode(struct pdf_struct *pdf, struct pdf_obj *obj, s
                 if ((rc = cli_checklimits("pdf", pdf->ctx, capacity + INFLATE_CHUNK_SIZE, 0, 0)) != CL_SUCCESS)
                     break;
 
-                if (!(temp = cli_realloc(decoded, capacity + INFLATE_CHUNK_SIZE))) {
+                if (!(temp = cli_max_realloc(decoded, capacity + INFLATE_CHUNK_SIZE))) {
                     cli_errmsg("cli_pdf: cannot reallocate memory for decoded output\n");
                     rc = CL_EMEM;
                     break;
@@ -604,7 +557,7 @@ static cl_error_t filter_rldecode(struct pdf_struct *pdf, struct pdf_obj *obj, s
                     break;
                 }
 
-                if (!(temp = cli_realloc(decoded, capacity + INFLATE_CHUNK_SIZE))) {
+                if (!(temp = cli_max_realloc(decoded, capacity + INFLATE_CHUNK_SIZE))) {
                     cli_errmsg("cli_pdf: cannot reallocate memory for decoded output\n");
                     rc = CL_EMEM;
                     break;
@@ -628,7 +581,7 @@ static cl_error_t filter_rldecode(struct pdf_struct *pdf, struct pdf_obj *obj, s
         if (declen == 0) {
             cli_dbgmsg("cli_pdf: empty stream after inflation completed.\n");
             rc = CL_BREAK;
-        } else if (!(temp = cli_realloc(decoded, declen))) {
+        } else if (!(temp = cli_max_realloc(decoded, declen))) {
             /* Shrink output buffer to final the decoded data length to minimize RAM usage */
             cli_errmsg("cli_pdf: cannot reallocate memory for decoded output\n");
             rc = CL_EMEM;
@@ -695,7 +648,7 @@ static cl_error_t filter_flatedecode(struct pdf_struct *pdf, struct pdf_obj *obj
 
     capacity = INFLATE_CHUNK_SIZE;
 
-    if (!(decoded = (uint8_t *)cli_malloc(capacity))) {
+    if (!(decoded = (uint8_t *)malloc(capacity))) {
         cli_errmsg("cli_pdf: cannot allocate memory for decoded output\n");
         return CL_EMEM;
     }
@@ -751,7 +704,7 @@ static cl_error_t filter_flatedecode(struct pdf_struct *pdf, struct pdf_obj *obj
                 break;
             }
 
-            if (!(temp = cli_realloc(decoded, capacity + INFLATE_CHUNK_SIZE))) {
+            if (!(temp = cli_max_realloc(decoded, capacity + INFLATE_CHUNK_SIZE))) {
                 cli_errmsg("cli_pdf: cannot reallocate memory for decoded output\n");
                 rc = CL_EMEM;
                 break;
@@ -810,7 +763,7 @@ static cl_error_t filter_flatedecode(struct pdf_struct *pdf, struct pdf_obj *obj
         if (declen == 0) {
             cli_dbgmsg("cli_pdf: empty stream after inflation completed.\n");
             rc = CL_BREAK;
-        } else if (!(temp = cli_realloc(decoded, declen))) {
+        } else if (!(temp = cli_max_realloc(decoded, declen))) {
             /* Shrink output buffer to final the decoded data length to minimize RAM usage */
             cli_errmsg("cli_pdf: cannot reallocate memory for decoded output\n");
             rc = CL_EMEM;
@@ -842,7 +795,7 @@ static cl_error_t filter_asciihexdecode(struct pdf_struct *pdf, struct pdf_obj *
     uint32_t i, j;
     cl_error_t rc = CL_SUCCESS;
 
-    if (!(decoded = (uint8_t *)cli_calloc(length / 2 + 1, sizeof(uint8_t)))) {
+    if (!(decoded = (uint8_t *)cli_max_calloc(length / 2 + 1, sizeof(uint8_t)))) {
         cli_errmsg("cli_pdf: cannot allocate memory for decoded output\n");
         return CL_EMEM;
     }
@@ -977,7 +930,7 @@ static cl_error_t filter_lzwdecode(struct pdf_struct *pdf, struct pdf_obj *obj, 
 
     capacity = INFLATE_CHUNK_SIZE;
 
-    if (!(decoded = (uint8_t *)cli_malloc(capacity))) {
+    if (!(decoded = (uint8_t *)malloc(capacity))) {
         cli_errmsg("cli_pdf: cannot allocate memory for decoded output\n");
         return CL_EMEM;
     }
@@ -1035,7 +988,7 @@ static cl_error_t filter_lzwdecode(struct pdf_struct *pdf, struct pdf_obj *obj, 
                 break;
             }
 
-            if (!(temp = cli_realloc(decoded, capacity + INFLATE_CHUNK_SIZE))) {
+            if (!(temp = cli_max_realloc(decoded, capacity + INFLATE_CHUNK_SIZE))) {
                 cli_errmsg("cli_pdf: cannot reallocate memory for decoded output\n");
                 rc = CL_EMEM;
                 break;
@@ -1095,7 +1048,7 @@ static cl_error_t filter_lzwdecode(struct pdf_struct *pdf, struct pdf_obj *obj, 
         if (declen == 0) {
             cli_dbgmsg("cli_pdf: empty stream after inflation completed.\n");
             rc = CL_BREAK;
-        } else if (!(temp = cli_realloc(decoded, declen))) {
+        } else if (!(temp = cli_max_realloc(decoded, declen))) {
             /* Shrink output buffer to final the decoded data length to minimize RAM usage */
             cli_errmsg("cli_pdf: cannot reallocate memory for decoded output\n");
             rc = CL_EMEM;

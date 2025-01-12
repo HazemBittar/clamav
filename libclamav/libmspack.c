@@ -63,7 +63,6 @@ static struct mspack_file *mspack_fmap_open(struct mspack_system *self,
         return NULL;
     }
     mspack_handle = malloc(sizeof(*mspack_handle));
-    memset(mspack_handle, 0, (sizeof(*mspack_handle)));
     if (!mspack_handle) {
         cli_dbgmsg("%s() failed at %d\n", __func__, __LINE__);
         return NULL;
@@ -290,7 +289,7 @@ static void mspack_fmap_message(struct mspack_file *file, const char *fmt, ...)
         memset(buff, 0, BUFSIZ);
 
         /* Add the prefix */
-        strncpy(buff, "LibClamAV debug: ", len);
+        memcpy(buff, "LibClamAV debug: ", len);
 
         va_start(args, fmt);
         vsnprintf(buff + len, sizeof(buff) - len - 2, fmt, args);
@@ -384,7 +383,7 @@ cl_error_t cli_scanmscab(cli_ctx *ctx, off_t sfx_offset)
         uint64_t max_size;
 
         ret = cli_matchmeta(ctx, cab_f->filename, 0, cab_f->length, 0,
-                            files, 0, NULL);
+                            files, 0);
         if (CL_SUCCESS != ret) {
             goto done;
         }
@@ -513,7 +512,7 @@ cl_error_t cli_scanmschm(cli_ctx *ctx)
         uint64_t max_size;
 
         ret = cli_matchmeta(ctx, mschm_f->filename, 0, mschm_f->length,
-                            0, files, 0, NULL);
+                            0, files, 0);
         if (CL_SUCCESS != ret) {
             goto done;
         }

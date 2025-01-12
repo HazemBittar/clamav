@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2007-2013 Sourcefire, Inc.
  *
  *  Authors: Tomasz Kojm
@@ -100,6 +100,7 @@
 #include "gif.h"
 #include "png.h"
 #include "iso9660.h"
+#include "udf.h"
 #include "dmg.h"
 #include "xar.h"
 #include "hfsplus.h"
@@ -120,9 +121,7 @@
 // libclamunrar_iface
 #include "unrar_iface.h"
 
-#ifdef HAVE_BZLIB_H
 #include <bzlib.h>
-#endif
 
 #include <fcntl.h>
 #include <string.h>
@@ -140,7 +139,7 @@ cl_error_t cli_magic_scan_dir(const char *dir, cli_ctx *ctx, uint32_t attributes
             if (dent->d_ino) {
                 if (strcmp(dent->d_name, ".") && strcmp(dent->d_name, "..")) {
                     /* build the full name */
-                    fname = cli_malloc(strlen(dir) + strlen(dent->d_name) + 2);
+                    fname = malloc(strlen(dir) + strlen(dent->d_name) + 2);
                     if (!fname) {
                         cli_dbgmsg("cli_magic_scan_dir: Unable to allocate memory for filename\n");
                         status = CL_EMEM;
@@ -204,7 +203,7 @@ static cl_error_t cli_unrar_scanmetadata(unrar_metadata_t *metadata, cli_ctx *ct
                (unsigned int)metadata->unpack_size, metadata->method,
                metadata->pack_size ? (unsigned int)(metadata->unpack_size / metadata->pack_size) : 0);
 
-    if (CL_VIRUS == cli_matchmeta(ctx, metadata->filename, metadata->pack_size, metadata->unpack_size, metadata->encrypted, files, metadata->crc, NULL)) {
+    if (CL_VIRUS == cli_matchmeta(ctx, metadata->filename, metadata->pack_size, metadata->unpack_size, metadata->encrypted, files, metadata->crc)) {
         status = CL_VIRUS;
     } else if (SCAN_HEURISTIC_ENCRYPTED_ARCHIVE && metadata->encrypted) {
         cli_dbgmsg("RAR: Encrypted files found in archive.\n");
@@ -389,7 +388,7 @@ static cl_error_t cli_scanrar_file(const char *filepath, int desc, cli_ctx *ctx)
                 /*
                  * Extract the file...
                  */
-                if (NULL != metadata.filename) {
+                if (0 != metadata.filename[0]) {
                     (void)cli_basename(metadata.filename, strlen(metadata.filename), &filename_base);
                 }
 
@@ -472,10 +471,6 @@ static cl_error_t cli_scanrar_file(const char *filepath, int desc, cli_ctx *ctx)
         /*
          * Free up any malloced metadata...
          */
-        if (metadata.filename != NULL) {
-            free(metadata.filename);
-            metadata.filename = NULL;
-        }
         if (NULL != filename_base) {
             free(filename_base);
             filename_base = NULL;
@@ -509,11 +504,6 @@ done:
     if (NULL != filename_base) {
         free(filename_base);
         filename_base = NULL;
-    }
-
-    if (metadata.filename != NULL) {
-        free(metadata.filename);
-        metadata.filename = NULL;
     }
 
     if (NULL != extract_fullpath) {
@@ -618,7 +608,7 @@ static cl_error_t cli_egg_scanmetadata(cl_egg_metadata *metadata, cli_ctx *ctx, 
                (unsigned int)metadata->unpack_size,
                metadata->pack_size ? (unsigned int)(metadata->unpack_size / metadata->pack_size) : 0);
 
-    if (CL_VIRUS == cli_matchmeta(ctx, metadata->filename, metadata->pack_size, metadata->unpack_size, metadata->encrypted, files, 0, NULL)) {
+    if (CL_VIRUS == cli_matchmeta(ctx, metadata->filename, metadata->pack_size, metadata->unpack_size, metadata->encrypted, files, 0)) {
         status = CL_VIRUS;
     } else if (SCAN_HEURISTIC_ENCRYPTED_ARCHIVE && metadata->encrypted) {
         cli_dbgmsg("EGG: Encrypted files found in archive.\n");
@@ -1019,7 +1009,7 @@ static cl_error_t cli_scanarj(cli_ctx *ctx)
 
         file++;
 
-        if (CL_VIRUS == cli_matchmeta(ctx, metadata.filename, metadata.comp_size, metadata.orig_size, metadata.encrypted, file, 0, NULL)) {
+        if (CL_VIRUS == cli_matchmeta(ctx, metadata.filename, metadata.comp_size, metadata.orig_size, metadata.encrypted, file, 0)) {
             cli_rmdirs(dir);
             free(dir);
             return CL_VIRUS;
@@ -1244,15 +1234,6 @@ static cl_error_t cli_scangzip(cli_ctx *ctx)
     return ret;
 }
 
-#ifndef HAVE_BZLIB_H
-static cl_error_t cli_scanbzip(cli_ctx *ctx)
-{
-    cli_warnmsg("cli_scanbzip: bzip2 support not compiled in\n");
-    return CL_CLEAN;
-}
-
-#else
-
 #ifdef NOBZ2PREFIX
 #define BZ2_bzDecompressInit bzDecompressInit
 #define BZ2_bzDecompress bzDecompress
@@ -1271,9 +1252,9 @@ static cl_error_t cli_scanbzip(cli_ctx *ctx)
     char buf[FILEBUFF];
 
     memset(&strm, 0, sizeof(strm));
-    strm.next_out = buf;
+    strm.next_out  = buf;
     strm.avail_out = sizeof(buf);
-    rc = BZ2_bzDecompressInit(&strm, 0, 0);
+    rc             = BZ2_bzDecompressInit(&strm, 0, 0);
     if (BZ_OK != rc) {
         cli_dbgmsg("Bzip: DecompressInit failed: %d\n", rc);
         return CL_EOPEN;
@@ -1287,7 +1268,7 @@ static cl_error_t cli_scanbzip(cli_ctx *ctx)
 
     do {
         if (!strm.avail_in) {
-            strm.next_in = (void *)fmap_need_off_once_len(ctx->fmap, off, FILEBUFF, &avail);
+            strm.next_in  = (void *)fmap_need_off_once_len(ctx->fmap, off, FILEBUFF, &avail);
             strm.avail_in = avail;
             off += avail;
             if (!strm.avail_in) {
@@ -1323,7 +1304,7 @@ static cl_error_t cli_scanbzip(cli_ctx *ctx)
             if (cli_checklimits("Bzip", ctx, size, 0, 0) != CL_CLEAN)
                 break;
 
-            strm.next_out = buf;
+            strm.next_out  = buf;
             strm.avail_out = sizeof(buf);
         }
     } while (BZ_STREAM_END != rc);
@@ -1349,7 +1330,6 @@ static cl_error_t cli_scanbzip(cli_ctx *ctx)
 
     return ret;
 }
-#endif
 
 static cl_error_t cli_scanxz(cli_ctx *ctx)
 {
@@ -1362,7 +1342,7 @@ static cl_error_t cli_scanxz(cli_ctx *ctx)
     size_t avail;
     unsigned char *buf;
 
-    buf = cli_malloc(CLI_XZ_OBUF_SIZE);
+    buf = malloc(CLI_XZ_OBUF_SIZE);
     if (buf == NULL) {
         cli_errmsg("cli_scanxz: nomemory for decompress buffer.\n");
         return CL_EMEM;
@@ -1564,8 +1544,6 @@ done:
     return ret;
 }
 
-#define min(x, y) ((x) < (y) ? (x) : (y))
-
 /**
  * Find a file in a directory tree.
  * \param filename Name of the file to find
@@ -1604,7 +1582,7 @@ cl_error_t find_file(const char *filename, const char *dir, char *result, size_t
                             }
                         } else if (S_ISREG(statbuf.st_mode)) {
                             if (strcmp(dent->d_name, filename) == 0) {
-                                len = min(strlen(dir) + 1, result_size);
+                                len = MIN(strlen(dir) + 1, result_size);
                                 memcpy(result, dir, len);
                                 result[len - 1] = '\0';
                                 closedir(dd);
@@ -1632,7 +1610,8 @@ static cl_error_t cli_ole2_tempdir_scan_vba_new(const char *dir, cli_ctx *ctx, s
     char *hash       = NULL;
     char path[PATH_MAX];
     char filename[PATH_MAX];
-    int tempfd = -1;
+    int tempfd     = -1;
+    char *tempfile = NULL;
 
     if (CL_SUCCESS != (ret = uniq_get(U, "dir", 3, &hash, &hashcnt))) {
         cli_dbgmsg("cli_ole2_tempdir_scan_vba_new: uniq_get('dir') failed with ret code (%d)!\n", ret);
@@ -1649,17 +1628,25 @@ static cl_error_t cli_ole2_tempdir_scan_vba_new(const char *dir, cli_ctx *ctx, s
 
         if (CL_SUCCESS == find_file(filename, dir, path, sizeof(path))) {
             cli_dbgmsg("cli_ole2_tempdir_scan_vba_new: Found dir file: %s\n", path);
-            if ((ret = cli_vba_readdir_new(ctx, path, U, hash, hashcnt, &tempfd, has_macros)) != CL_SUCCESS) {
+            if ((ret = cli_vba_readdir_new(ctx, path, U, hash, hashcnt, &tempfd, has_macros, &tempfile)) != CL_SUCCESS) {
                 // FIXME: Since we only know the stream name of the OLE2 stream, but not its path inside the
                 //        OLE2 archive, we don't know if we have the right file. The only thing we can do is
                 //        iterate all of them until one succeeds.
                 cli_dbgmsg("cli_ole2_tempdir_scan_vba_new: Failed to read dir from %s, trying others (error: %s (%d))\n", path, cl_strerror(ret), (int)ret);
+
+                if (tempfile) {
+                    if (!ctx->engine->keeptmp) {
+                        remove(tempfile);
+                    }
+                    free(tempfile);
+                    tempfile = NULL;
+                }
+
                 ret = CL_SUCCESS;
                 hashcnt--;
                 continue;
             }
 
-#if HAVE_JSON
             if (*has_macros && SCAN_COLLECT_METADATA && (ctx->wrkproperty != NULL)) {
                 cli_jsonbool(ctx->wrkproperty, "HasMacros", 1);
                 json_object *macro_languages = cli_jsonarray(ctx->wrkproperty, "MacroLanguages");
@@ -1669,7 +1656,7 @@ static cl_error_t cli_ole2_tempdir_scan_vba_new(const char *dir, cli_ctx *ctx, s
                     cli_dbgmsg("[cli_ole2_tempdir_scan_vba_new] Failed to add \"VBA\" entry to MacroLanguages JSON array\n");
                 }
             }
-#endif
+
             if (SCAN_HEURISTIC_MACROS && *has_macros) {
                 ret = cli_append_potentially_unwanted(ctx, "Heuristics.OLE2.ContainsMacros.VBA");
                 if (ret == CL_VIRUS) {
@@ -1693,6 +1680,14 @@ static cl_error_t cli_ole2_tempdir_scan_vba_new(const char *dir, cli_ctx *ctx, s
 
             close(tempfd);
             tempfd = -1;
+
+            if (tempfile) {
+                if (!ctx->engine->keeptmp) {
+                    remove(tempfile);
+                }
+                free(tempfile);
+                tempfile = NULL;
+            }
         }
 
         hashcnt--;
@@ -1702,6 +1697,14 @@ done:
     if (tempfd != -1) {
         close(tempfd);
         tempfd = -1;
+    }
+
+    if (tempfile) {
+        if (!ctx->engine->keeptmp) {
+            remove(tempfile);
+        }
+        free(tempfile);
+        tempfile = NULL;
     }
 
     return ret;
@@ -1723,7 +1726,6 @@ static cl_error_t cli_ole2_tempdir_scan_summary(const char *dir, cli_ctx *ctx, s
     char *hash;
     uint32_t hashcnt = 0;
 
-#if HAVE_JSON
     if (CL_SUCCESS != (ret = uniq_get(U, "_5_summaryinformation", 21, &hash, &hashcnt))) {
         cli_dbgmsg("cli_ole2_tempdir_scan_summary: uniq_get('_5_summaryinformation') failed with ret code (%d)!\n", ret);
         status = ret;
@@ -1765,7 +1767,6 @@ static cl_error_t cli_ole2_tempdir_scan_summary(const char *dir, cli_ctx *ctx, s
         }
         hashcnt--;
     }
-#endif
 
 done:
 
@@ -2006,7 +2007,6 @@ static cl_error_t cli_ole2_tempdir_scan_vba(const char *dir, cli_ctx *ctx, struc
 done:
 
     if (*has_macros) {
-#if HAVE_JSON
         if (SCAN_COLLECT_METADATA && (ctx->wrkproperty != NULL)) {
             cli_jsonbool(ctx->wrkproperty, "HasMacros", 1);
             json_object *macro_languages = cli_jsonarray(ctx->wrkproperty, "MacroLanguages");
@@ -2016,7 +2016,6 @@ done:
                 cli_dbgmsg("cli_ole2_tempdir_scan_vba: Failed to add \"VBA\" entry to MacroLanguages JSON array\n");
             }
         }
-#endif
 
         if (SCAN_HEURISTIC_MACROS) {
             ret = cli_append_potentially_unwanted(ctx, "Heuristics.OLE2.ContainsMacros.VBA");
@@ -2045,6 +2044,10 @@ done:
         free(fullname);
     }
 
+    if (fd >= 0) {
+        close(fd);
+    }
+
     return status;
 }
 
@@ -2070,13 +2073,459 @@ static cl_error_t cli_ole2_tempdir_scan_for_xlm_and_images(const char *dir, cli_
                 case CL_EMEM:
                     goto done;
                 default:
-                    cli_dbgmsg("cli_ole2_tempdir_scan_for_xlm_and_images: An error occured when parsing XLM BIFF temp file, skipping to next file.\n");
+                    cli_dbgmsg("cli_ole2_tempdir_scan_for_xlm_and_images: An error occurred when parsing XLM BIFF temp file, skipping to next file.\n");
             }
         }
     }
 
 done:
     return ret;
+}
+
+const char *const HTML_URLS_JSON_KEY = "HTMLUrls";
+/* https://www.iana.org/assignments/uri-schemes/uri-schemes.xhtml  */
+const char *URI_LIST[] = {
+    "aaa://",
+    "aaas://",
+    "about://",
+    "acap://",
+    "acct://",
+    "acd://",
+    "acr://",
+    "adiumxtra://",
+    "adt://",
+    "afp://",
+    "afs://",
+    "aim://",
+    "amss://",
+    "android://",
+    "appdata://",
+    "apt://",
+    "ar://",
+    "ark://",
+    "at://",
+    "attachment://",
+    "aw://",
+    "barion://",
+    "bb://",
+    "beshare://",
+    "bitcoin://",
+    "bitcoincash://",
+    "blob://",
+    "bolo://",
+    "brid://",
+    "browserext://",
+    "cabal://",
+    "calculator://",
+    "callto://",
+    "cap://",
+    "cast://",
+    "casts://",
+    "chrome://",
+    "chrome-extension://",
+    "cid://",
+    "coap://",
+    "coap+tcp://",
+    "coap+ws://",
+    "coaps://",
+    "coaps+tcp://",
+    "coaps+ws://",
+    "com-eventbrite-attendee://",
+    "content://",
+    "content-type://",
+    "crid://",
+    "cstr://",
+    "cvs://",
+    "dab://",
+    "dat://",
+    "data://",
+    "dav://",
+    "dhttp://",
+    "diaspora://",
+    "dict://",
+    "did://",
+    "dis://",
+    "dlna-playcontainer://",
+    "dlna-playsingle://",
+    "dns://",
+    "dntp://",
+    "doi://",
+    "dpp://",
+    "drm://",
+    "drop://",
+    "dtmi://",
+    "dtn://",
+    "dvb://",
+    "dvx://",
+    "dweb://",
+    "ed2k://",
+    "eid://",
+    "elsi://",
+    "embedded://",
+    "ens://",
+    "ethereum://",
+    "example://",
+    "facetime://",
+    "fax://",
+    "feed://",
+    "feedready://",
+    "fido://",
+    "file://",
+    "filesystem://",
+    "finger://",
+    "first-run-pen-experience://",
+    "fish://",
+    "fm://",
+    "ftp://",
+    "fuchsia-pkg://",
+    "geo://",
+    "gg://",
+    "git://",
+    "gitoid://",
+    "gizmoproject://",
+    "go://",
+    "gopher://",
+    "graph://",
+    "grd://",
+    "gtalk://",
+    "h323://",
+    "ham://",
+    "hcap://",
+    "hcp://",
+    "hs20://",
+    "http://",
+    "https://",
+    "hxxp://",
+    "hxxps://",
+    "hydrazone://",
+    "hyper://",
+    "iax://",
+    "icap://",
+    "icon://",
+    "im://",
+    "imap://",
+    "info://",
+    "iotdisco://",
+    "ipfs://",
+    "ipn://",
+    "ipns://",
+    "ipp://",
+    "ipps://",
+    "irc://",
+    "irc6://",
+    "ircs://",
+    "iris://",
+    "iris.beep://",
+    "iris.lwz://",
+    "iris.xpc://",
+    "iris.xpcs://",
+    "isostore://",
+    "itms://",
+    "jabber://",
+    "jar://",
+    "jms://",
+    "keyparc://",
+    "lastfm://",
+    "lbry://",
+    "ldap://",
+    "ldaps://",
+    "leaptofrogans://",
+    "lid://",
+    "lorawan://",
+    "lpa://",
+    "lvlt://",
+    "machineProvisioningProgressReporter://",
+    "magnet://",
+    "mailserver://",
+    "mailto://",
+    "maps://",
+    "market://",
+    "matrix://",
+    "message://",
+    "microsoft.windows.camera://",
+    "microsoft.windows.camera.multipicker://",
+    "microsoft.windows.camera.picker://",
+    "mid://",
+    "mms://",
+    "modem://",
+    "mongodb://",
+    "moz://",
+    "ms-access://",
+    "ms-appinstaller://",
+    "ms-browser-extension://",
+    "ms-calculator://",
+    "ms-drive-to://",
+    "ms-enrollment://",
+    "ms-excel://",
+    "ms-eyecontrolspeech://",
+    "ms-gamebarservices://",
+    "ms-gamingoverlay://",
+    "ms-getoffice://",
+    "ms-help://",
+    "ms-infopath://",
+    "ms-inputapp://",
+    "ms-launchremotedesktop://",
+    "ms-lockscreencomponent-config://",
+    "ms-media-stream-id://",
+    "ms-meetnow://",
+    "ms-mixedrealitycapture://",
+    "ms-mobileplans://",
+    "ms-newsandinterests://",
+    "ms-officeapp://",
+    "ms-people://",
+    "ms-project://",
+    "ms-powerpoint://",
+    "ms-publisher://",
+    "ms-recall://",
+    "ms-remotedesktop://",
+    "ms-remotedesktop-launch://",
+    "ms-restoretabcompanion://",
+    "ms-screenclip://",
+    "ms-screensketch://",
+    "ms-search://",
+    "ms-search-repair://",
+    "ms-secondary-screen-controller://",
+    "ms-secondary-screen-setup://",
+    "ms-settings://",
+    "ms-settings-airplanemode://",
+    "ms-settings-bluetooth://",
+    "ms-settings-camera://",
+    "ms-settings-cellular://",
+    "ms-settings-cloudstorage://",
+    "ms-settings-connectabledevices://",
+    "ms-settings-displays-topology://",
+    "ms-settings-emailandaccounts://",
+    "ms-settings-language://",
+    "ms-settings-location://",
+    "ms-settings-lock://",
+    "ms-settings-nfctransactions://",
+    "ms-settings-notifications://",
+    "ms-settings-power://",
+    "ms-settings-privacy://",
+    "ms-settings-proximity://",
+    "ms-settings-screenrotation://",
+    "ms-settings-wifi://",
+    "ms-settings-workplace://",
+    "ms-spd://",
+    "ms-stickers://",
+    "ms-sttoverlay://",
+    "ms-transit-to://",
+    "ms-useractivityset://",
+    "ms-virtualtouchpad://",
+    "ms-visio://",
+    "ms-walk-to://",
+    "ms-whiteboard://",
+    "ms-whiteboard-cmd://",
+    "ms-word://",
+    "msnim://",
+    "msrp://",
+    "msrps://",
+    "mss://",
+    "mt://",
+    "mtqp://",
+    "mumble://",
+    "mupdate://",
+    "mvn://",
+    "mvrp://",
+    "mvrps://",
+    "news://",
+    "nfs://",
+    "ni://",
+    "nih://",
+    "nntp://",
+    "notes://",
+    "num://",
+    "ocf://",
+    "oid://",
+    "onenote://",
+    "onenote-cmd://",
+    "opaquelocktoken://",
+    "openid://",
+    "openpgp4fpr://",
+    "otpauth://",
+    "p1://",
+    "pack://",
+    "palm://",
+    "paparazzi://",
+    "payment://",
+    "payto://",
+    "pkcs11://",
+    "platform://",
+    "pop://",
+    "pres://",
+    "prospero://",
+    "proxy://",
+    "pwid://",
+    "psyc://",
+    "pttp://",
+    "qb://",
+    "query://",
+    "quic-transport://",
+    "redis://",
+    "rediss://",
+    "reload://",
+    "res://",
+    "resource://",
+    "rmi://",
+    "rsync://",
+    "rtmfp://",
+    "rtmp://",
+    "rtsp://",
+    "rtsps://",
+    "rtspu://",
+    "sarif://",
+    "secondlife://",
+    "secret-token://",
+    "service://",
+    "session://",
+    "sftp://",
+    "sgn://",
+    "shc://",
+    "shttp://",
+    "sieve://",
+    "simpleledger://",
+    "simplex://",
+    "sip://",
+    "sips://",
+    "skype://",
+    "smb://",
+    "smp://",
+    "sms://",
+    "smtp://",
+    "snews://",
+    "snmp://",
+    "soap.beep://",
+    "soap.beeps://",
+    "soldat://",
+    "spiffe://",
+    "spotify://",
+    "ssb://",
+    "ssh://",
+    "starknet://",
+    "steam://",
+    "stun://",
+    "stuns://",
+    "submit://",
+    "svn://",
+    "swh://",
+    "swid://",
+    "swidpath://",
+    "tag://",
+    "taler://",
+    "teamspeak://",
+    "tel://",
+    "teliaeid://",
+    "telnet://",
+    "tftp://",
+    "things://",
+    "thismessage://",
+    "tip://",
+    "tn3270://",
+    "tool://",
+    "turn://",
+    "turns://",
+    "tv://",
+    "udp://",
+    "unreal://",
+    "upt://",
+    "urn://",
+    "ut2004://",
+    "uuid-in-package://",
+    "v-event://",
+    "vemmi://",
+    "ventrilo://",
+    "ves://",
+    "videotex://",
+    "vnc://",
+    "view-source://",
+    "vscode://",
+    "vscode-insiders://",
+    "vsls://",
+    "w3://",
+    "wais://",
+    "web3://",
+    "wcr://",
+    "webcal://",
+    "web+ap://",
+    "wifi://",
+    "wpid://",
+    "ws://",
+    "wss://",
+    "wtai://",
+    "wyciwyg://",
+    "xcon://",
+    "xcon-userid://",
+    "xfire://",
+    "xmlrpc.beep://",
+    "xmlrpc.beeps://",
+    "xmpp://",
+    "xftp://",
+    "xrcp://",
+    "xri://",
+    "ymsgr://",
+    "z39.50://",
+    "z39.50r://",
+    "z39.50s://"};
+
+static bool is_url(const char *const str, size_t str_len)
+{
+    bool bRet = false;
+    size_t i;
+
+    for (i = 0; i < sizeof(URI_LIST) / sizeof(URI_LIST[0]); i++) {
+        if (str && (str_len > strlen(URI_LIST[i])) && (0 == strncasecmp(str, URI_LIST[i], strlen(URI_LIST[i])))) {
+            bRet = true;
+            goto done;
+        }
+    }
+done:
+    return bRet;
+}
+
+static void save_urls(cli_ctx *ctx, tag_arguments_t *hrefs, form_data_t *form_data)
+{
+    int i            = 0;
+    json_object *ary = NULL;
+
+    if (NULL == hrefs) {
+        return;
+    }
+
+    if (ctx->wrkproperty != ctx->properties) {
+        return;
+    }
+
+    if (!(SCAN_STORE_HTML_URLS && SCAN_COLLECT_METADATA && (ctx->wrkproperty != NULL))) {
+        return;
+    }
+
+    /*Add hrefs*/
+    for (i = 0; i < hrefs->count; i++) {
+        if (is_url((const char *)hrefs->value[i], strlen((const char *)hrefs->value[i]))) {
+            if (NULL == ary) {
+                ary = cli_jsonarray(ctx->wrkproperty, HTML_URLS_JSON_KEY);
+                if (!ary) {
+                    cli_dbgmsg("[cli_scanhtml] Failed to add \"%s\" entry JSON array\n", HTML_URLS_JSON_KEY);
+                    return;
+                }
+            }
+            cli_jsonstr(ary, NULL, (const char *)hrefs->value[i]);
+        }
+    }
+
+    /*Add form_data*/
+    for (i = 0; i < (int)form_data->count; i++) {
+        if (is_url((const char *)form_data->urls[i], strlen((const char *)form_data->urls[i]))) {
+            if (NULL == ary) {
+                ary = cli_jsonarray(ctx->wrkproperty, HTML_URLS_JSON_KEY);
+                if (!ary) {
+                    cli_dbgmsg("[cli_scanhtml] Failed to add \"%s\" entry JSON array\n", HTML_URLS_JSON_KEY);
+                    return;
+                }
+            }
+            cli_jsonstr(ary, NULL, (const char *)form_data->urls[i]);
+        }
+    }
 }
 
 static cl_error_t cli_scanhtml(cli_ctx *ctx)
@@ -2110,7 +2559,18 @@ static cl_error_t cli_scanhtml(cli_ctx *ctx)
 
     cli_dbgmsg("cli_scanhtml: using tempdir %s\n", tempname);
 
-    (void)html_normalise_map(map, tempname, NULL, ctx->dconf);
+    /* Output JSON Summary Information */
+    if (SCAN_STORE_HTML_URLS && SCAN_COLLECT_METADATA && (ctx->wrkproperty != NULL)) {
+        tag_arguments_t hrefs = {0};
+        hrefs.scanContents    = 1;
+        form_data_t form_data = {0};
+        (void)html_normalise_map_form_data(ctx, map, tempname, &hrefs, ctx->dconf, &form_data);
+        save_urls(ctx, &hrefs, &form_data);
+        html_tag_arg_free(&hrefs);
+        html_form_data_tag_free(&form_data);
+    } else {
+        (void)html_normalise_map(ctx, map, tempname, NULL, ctx->dconf);
+    }
 
     snprintf(fullname, 1024, "%s" PATHSEP "nocomment.html", tempname);
     fd = open(fullname, O_RDONLY | O_BINARY);
@@ -2234,7 +2694,7 @@ static cl_error_t cli_scanscript(cli_ctx *ctx)
         goto done;
     }
 
-    if (!(normalized = cli_malloc(SCANBUFF + maxpatlen))) {
+    if (!(normalized = malloc(SCANBUFF + maxpatlen))) {
         cli_dbgmsg("cli_scanscript: Unable to malloc %u bytes\n", SCANBUFF);
         ret = CL_EMEM;
         goto done;
@@ -2562,7 +3022,7 @@ static cl_error_t cli_ole2_scan_tempdir(
             if (dent->d_ino) {
                 if (strcmp(dent->d_name, ".") && strcmp(dent->d_name, "..")) {
                     /* build the full name */
-                    subdirectory = cli_malloc(strlen(dir) + strlen(dent->d_name) + 2);
+                    subdirectory = malloc(strlen(dir) + strlen(dent->d_name) + 2);
                     if (!subdirectory) {
                         cli_dbgmsg("cli_ole2_tempdir_scan_vba: Unable to allocate memory for subdirectory path\n");
                         status = CL_EMEM;
@@ -2750,7 +3210,7 @@ static cl_error_t cli_scancryptff(cli_ctx *ctx)
     /* Skip the CryptFF file header */
     pos = 0x10;
 
-    if ((dest = (unsigned char *)cli_malloc(FILEBUFF)) == NULL) {
+    if ((dest = (unsigned char *)malloc(FILEBUFF)) == NULL) {
         cli_dbgmsg("CryptFF: Can't allocate memory\n");
         return CL_EMEM;
     }
@@ -3269,11 +3729,7 @@ static cl_error_t scanraw(cli_ctx *ctx, cli_file_t type, uint8_t typercg, cli_fi
 
     cli_file_t found_type;
 
-#if HAVE_JSON
     struct json_object *parent_property = NULL;
-#else
-    void *parent_property = NULL;
-#endif
 
     if ((typercg) &&
         // We should also omit bzips, but DMG's may be detected in bzips. (type != CL_TYPE_BZ) &&        /* Omit BZ files because they can contain portions of original files like zip file entries that cause invalid extractions and lots of warnings. Decompress first, then scan! */
@@ -3289,7 +3745,7 @@ static cl_error_t scanraw(cli_ctx *ctx, cli_file_t type, uint8_t typercg, cli_fi
         (type != CL_TYPE_OLD_TAR) &&   /* Omit OLD TAR files because it's a raw archive format that we can extract and scan manually. */
         (type != CL_TYPE_POSIX_TAR)) { /* Omit POSIX TAR files because it's a raw archive format that we can extract and scan manually. */
         /*
-         * Enable file type recognition scan mode if requested, except for some some problematic types (above).
+         * Enable file type recognition scan mode if requested, except for some problematic types (above).
          */
         acmode |= AC_SCAN_FT;
     }
@@ -3298,7 +3754,7 @@ static cl_error_t scanraw(cli_ctx *ctx, cli_file_t type, uint8_t typercg, cli_fi
     ret = cli_scan_fmap(ctx, type == CL_TYPE_TEXT_ASCII ? CL_TYPE_ANY : type, false, &ftoffset, acmode, NULL, refhash);
     perf_stop(ctx, PERFT_RAW);
 
-    // In allmatch-mode, ret will never be CL_VIRUS, so ret may be used exlusively for file type detection and for terminal errors.
+    // In allmatch-mode, ret will never be CL_VIRUS, so ret may be used exclusively for file type detection and for terminal errors.
     // When not in allmatch-mode, it's more important to return right away if ret is CL_VIRUS, so we don't care if file type matches were found.
     if (ret >= CL_TYPENO) {
         // Matched 1+ file type signatures. Handle them.
@@ -3312,7 +3768,6 @@ static cl_error_t scanraw(cli_ctx *ctx, cli_file_t type, uint8_t typercg, cli_fi
             if (fpt->offset > 0) {
                 bool type_has_been_handled = true;
 
-#if HAVE_JSON
                 /*
                  * Add embedded file to metadata JSON.
                  */
@@ -3351,7 +3806,7 @@ static cl_error_t scanraw(cli_ctx *ctx, cli_file_t type, uint8_t typercg, cli_fi
                         break;
                     }
                 }
-#endif
+
                 /*
                  * First, use "embedded type recognition" to identify a file's actual type.
                  * (a.k.a. not embedded files, but file type detection corrections)
@@ -3460,8 +3915,20 @@ static cl_error_t scanraw(cli_ctx *ctx, cli_file_t type, uint8_t typercg, cli_fi
                                 // Reassign type of current layer based on what we discovered
                                 cli_recursion_stack_change_type(ctx, fpt->type);
 
-                                cli_dbgmsg("DMG signature found at %u\n", (unsigned int)fpt->offset);
+                                cli_dbgmsg("ISO signature found at %u\n", (unsigned int)fpt->offset);
                                 nret = cli_scaniso(ctx, fpt->offset);
+                            }
+                        }
+                        break;
+
+                    case CL_TYPE_UDF:
+                        if (SCAN_PARSE_ARCHIVE && (DCONF_ARCH & ARCH_CONF_UDF)) {
+                            {
+                                // Reassign type of current layer based on what we discovered
+                                cli_recursion_stack_change_type(ctx, fpt->type);
+
+                                cli_dbgmsg("UDF signature found at %u\n", (unsigned int)fpt->offset);
+                                nret = cli_scanudf(ctx, fpt->offset);
                             }
                         }
                         break;
@@ -3854,12 +4321,10 @@ static cl_error_t scanraw(cli_ctx *ctx, cli_file_t type, uint8_t typercg, cli_fi
 
             fpt = fpt->next;
 
-#if HAVE_JSON
             if (NULL != parent_property) {
                 ctx->wrkproperty = (struct json_object *)(parent_property);
                 parent_property  = NULL;
             }
-#endif
         } // end while (fpt) loop
 
         if (!((nret == CL_EMEM) || (ctx->abort_scan))) {
@@ -3899,11 +4364,9 @@ static cl_error_t scanraw(cli_ctx *ctx, cli_file_t type, uint8_t typercg, cli_fi
         ret = nret;
     } // end if (ret >= CL_TYPENO)
 
-#if HAVE_JSON
     if (NULL != parent_property) {
         ctx->wrkproperty = (struct json_object *)(parent_property);
     }
-#endif
 
     while (ftoffset) {
         fpt      = ftoffset;
@@ -3980,7 +4443,7 @@ static cl_error_t dispatch_file_inspection_callback(clcb_file_inspection cb, cli
     fmap = ctx->recursion_stack[fmap_index].fmap;
     fd   = fmap_fd(fmap);
 
-    CLI_CALLOC(ancestors, ctx->recursion_level + 1, sizeof(char *), status = CL_EMEM);
+    CLI_MAX_CALLOC_OR_GOTO_DONE(ancestors, ctx->recursion_level + 1, sizeof(char *), status = CL_EMEM);
 
     file_name   = fmap->name;
     file_buffer = fmap_need_off_once_len(fmap, 0, fmap->len, &file_size);
@@ -4022,7 +4485,7 @@ static cl_error_t dispatch_file_inspection_callback(clcb_file_inspection cb, cli
 
 done:
 
-    FREE(ancestors);
+    CLI_FREE_AND_SET_NULL(ancestors);
     return status;
 }
 
@@ -4160,7 +4623,7 @@ static inline bool result_should_goto_done(cli_ctx *ctx, cl_error_t result_in, c
          * Reasons to halt the scan but report a successful scan.
          */
 
-        // Exceeding the time limit should definitly halt the scan.
+        // Exceeding the time limit should definitely halt the scan.
         // But unless the user enabled alert-exceeds-max, we don't want to complain about it.
         case CL_ETIMEOUT:
 
@@ -4206,8 +4669,9 @@ done:
 
 cl_error_t cli_magic_scan(cli_ctx *ctx, cli_file_t type)
 {
-    cl_error_t ret = CL_CLEAN;
-    cl_error_t cache_check_result;
+    cl_error_t ret                = CL_CLEAN;
+    cl_error_t cache_check_result = CL_VIRUS;
+    bool cache_enabled            = true;
     cl_error_t verdict_at_this_level;
     cli_file_t dettype              = 0;
     uint8_t typercg                 = 1;
@@ -4216,11 +4680,7 @@ cl_error_t cli_magic_scan(cli_ctx *ctx, cli_file_t type)
     bitset_t *old_hook_lsig_matches = NULL;
     const char *filetype;
 
-#if HAVE_JSON
     struct json_object *parent_property = NULL;
-#else
-    void *parent_property = NULL;
-#endif
 
     char *old_temp_path = NULL;
     char *new_temp_path = NULL;
@@ -4238,7 +4698,7 @@ cl_error_t cli_magic_scan(cli_ctx *ctx, cli_file_t type)
     }
 
     if (ctx->fmap->len <= 5) {
-        cli_dbgmsg("cli_magic_scan: File is too too small (%zu bytes), ignoring.\n", ctx->fmap->len);
+        cli_dbgmsg("cli_magic_scan: File is too small (%zu bytes), ignoring.\n", ctx->fmap->len);
         ret = CL_CLEAN;
         goto early_ret;
     }
@@ -4293,6 +4753,10 @@ cl_error_t cli_magic_scan(cli_ctx *ctx, cli_file_t type)
         typercg = 0;
     }
 
+    if (ctx->engine->engine_options & ENGINE_OPTIONS_DISABLE_CACHE) {
+        cache_enabled = false;
+    }
+
     /*
      * Perform file typing from the start of the file.
      */
@@ -4312,7 +4776,6 @@ cl_error_t cli_magic_scan(cli_ctx *ctx, cli_file_t type)
     /* set current layer to the type we found */
     cli_recursion_stack_change_type(ctx, type);
 
-#if HAVE_JSON
     if (SCAN_COLLECT_METADATA) {
         /*
          * Create JSON object to record metadata during the scan.
@@ -4387,7 +4850,6 @@ cl_error_t cli_magic_scan(cli_ctx *ctx, cli_file_t type)
             goto early_ret;
         }
     }
-#endif
 
     /*
      * Run the pre_scan callback.
@@ -4398,17 +4860,19 @@ cl_error_t cli_magic_scan(cli_ctx *ctx, cli_file_t type)
     }
 
     /*
-     * Get the maphash
+     * Get the maphash, if necessary
      */
-    if (CL_SUCCESS != fmap_get_hash(ctx->fmap, &hash, CLI_HASH_MD5)) {
-        cli_dbgmsg("cli_magic_scan: Failed to get a hash for the current fmap.\n");
+    if (cache_enabled || (SCAN_COLLECT_METADATA)) {
+        if (CL_SUCCESS != fmap_get_hash(ctx->fmap, &hash, CLI_HASH_MD5)) {
+            cli_dbgmsg("cli_magic_scan: Failed to get a hash for the current fmap.\n");
 
-        // It may be that the file was truncated between the time we started the scan and the time we got the hash.
-        // Not a reason to print an error message.
-        ret = CL_SUCCESS;
-        goto done;
+            // It may be that the file was truncated between the time we started the scan and the time we got the hash.
+            // Not a reason to print an error message.
+            ret = CL_SUCCESS;
+            goto done;
+        }
+        hashed_size = ctx->fmap->len;
     }
-    hashed_size = ctx->fmap->len;
 
     ret = dispatch_file_inspection_callback(ctx->engine->cb_file_inspection, ctx, filetype);
     if (CL_CLEAN != ret) {
@@ -4423,11 +4887,12 @@ cl_error_t cli_magic_scan(cli_ctx *ctx, cli_file_t type)
     /*
      * Check if we've already scanned this file before.
      */
-    perf_start(ctx, PERFT_CACHE);
-    cache_check_result = clean_cache_check(hash, hashed_size, ctx);
-    perf_stop(ctx, PERFT_CACHE);
+    if (cache_enabled) {
+        perf_start(ctx, PERFT_CACHE);
+        cache_check_result = clean_cache_check(hash, hashed_size, ctx);
+        perf_stop(ctx, PERFT_CACHE);
+    }
 
-#if HAVE_JSON
     if (SCAN_COLLECT_METADATA) {
         char hashstr[CLI_HASHLEN_MD5 * 2 + 1];
         snprintf(hashstr, CLI_HASHLEN_MD5 * 2 + 1, "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
@@ -4435,17 +4900,13 @@ cl_error_t cli_magic_scan(cli_ctx *ctx, cli_file_t type)
                  hash[8], hash[9], hash[10], hash[11], hash[12], hash[13], hash[14], hash[15]);
 
         ret = cli_jsonstr(ctx->wrkproperty, "FileMD5", hashstr);
-        if (ctx->engine->engine_options & ENGINE_OPTIONS_DISABLE_CACHE) {
-            memset(hash, 0, CLI_HASHLEN_MD5);
-        }
         if (ret != CL_SUCCESS) {
             cli_dbgmsg("cli_magic_scan: returning %d %s (no post, no cache)\n", ret, __AT__);
             goto early_ret;
         }
     }
-#endif
 
-    if (cache_check_result != CL_VIRUS) {
+    if (cache_enabled && (cache_check_result != CL_VIRUS)) {
         cli_dbgmsg("cli_magic_scan: returning %d %s (no post, no cache)\n", ret, __AT__);
         ret = CL_SUCCESS;
         goto early_ret;
@@ -4491,7 +4952,7 @@ cl_error_t cli_magic_scan(cli_ctx *ctx, cli_file_t type)
          * If self protection mechanism enabled, do the scanraw() scan first
          * before extracting with a file type parser.
          */
-        ret = scanraw(ctx, type, 0, &dettype, (ctx->engine->engine_options & ENGINE_OPTIONS_DISABLE_CACHE) ? NULL : hash);
+        ret = scanraw(ctx, type, 0, &dettype, hash);
 
         // Evaluate the result from the scan to see if it end the scan of this layer early,
         // and to decid if we should propagate an error or not.
@@ -4548,11 +5009,26 @@ cl_error_t cli_magic_scan(cli_ctx *ctx, cli_file_t type)
                 ret = cli_scanegg(ctx);
             break;
 
+        case CL_TYPE_ONENOTE:
+            if (SCAN_PARSE_ONENOTE && (DCONF_ARCH & DOC_CONF_ONENOTE))
+                ret = scan_onenote(ctx);
+            break;
+
+        case CL_TYPE_ALZ:
+            if (SCAN_PARSE_ARCHIVE && (DCONF_ARCH & ARCH_CONF_ALZ)) {
+                ret = cli_scanalz(ctx);
+            }
+            break;
+
+        case CL_TYPE_LHA_LZH:
+            if (SCAN_PARSE_ARCHIVE && (DCONF_ARCH & ARCH_CONF_LHA_LZH))
+                ret = scan_lha_lzh(ctx);
+            break;
+
         case CL_TYPE_OOXML_WORD:
         case CL_TYPE_OOXML_PPT:
         case CL_TYPE_OOXML_XL:
         case CL_TYPE_OOXML_HWP:
-#if HAVE_JSON
             if (SCAN_PARSE_XMLDOCS && (DCONF_DOC & DOC_CONF_OOXML)) {
                 if (SCAN_COLLECT_METADATA && (ctx->wrkproperty != NULL)) {
                     ret = cli_process_ooxml(ctx, type);
@@ -4571,7 +5047,6 @@ cl_error_t cli_magic_scan(cli_ctx *ctx, cli_file_t type)
                     }
                 }
             }
-#endif
             /* fall-through */
         case CL_TYPE_ZIP:
             if (SCAN_PARSE_ARCHIVE && (DCONF_ARCH & ARCH_CONF_ZIP))
@@ -4734,80 +5209,106 @@ cl_error_t cli_magic_scan(cli_ctx *ctx, cli_file_t type)
             break;
 
         case CL_TYPE_GRAPHICS: {
-            /*
-             * This case is for unhandled graphics types such as BMP, JPEG 2000, etc.
-             *
-             * Note: JPEG 2000 is a very different format from JPEG, JPEG/JFIF, JPEG/Exif, JPEG/SPIFF (1994, 1997)
-             * JPEG 2000 is not handled by cli_scanjpeg or cli_parsejpeg.
-             */
+            if (SCAN_PARSE_IMAGE) {
+                /*
+                 * This case is for unhandled graphics types such as BMP, JPEG 2000, etc.
+                 *
+                 * Note: JPEG 2000 is a very different format from JPEG, JPEG/JFIF, JPEG/Exif, JPEG/SPIFF (1994, 1997)
+                 * JPEG 2000 is not handled by cli_parsejpeg.
+                 */
 
-            // It's okay if it fails to calculate the fuzzy hash.
-            (void)calculate_fuzzy_image_hash(ctx, type);
-
+                if (SCAN_PARSE_IMAGE_FUZZY_HASH && (DCONF_OTHER & OTHER_CONF_IMAGE_FUZZY_HASH)) {
+                    // It's okay if it fails to calculate the fuzzy hash.
+                    (void)calculate_fuzzy_image_hash(ctx, type);
+                }
+            }
             break;
         }
 
         case CL_TYPE_GIF: {
-            if (SCAN_HEURISTICS && SCAN_HEURISTIC_BROKEN_MEDIA && (DCONF_OTHER & OTHER_CONF_GIF)) {
-                ret = cli_parsegif(ctx);
+            if (SCAN_PARSE_IMAGE && (DCONF_OTHER & OTHER_CONF_GIF)) {
+                if (SCAN_HEURISTICS && SCAN_HEURISTIC_BROKEN_MEDIA) {
+                    /*
+                     * Parse GIF files, checking for exploits and other file format issues.
+                     */
+                    ret = cli_parsegif(ctx);
+                    if (CL_SUCCESS != ret) {
+                        // do not calculate the fuzzy image hash if parsing failed, or a heuristic alert occurred.
+                        break;
+                    }
+                }
+
+                if (SCAN_PARSE_IMAGE_FUZZY_HASH && (DCONF_OTHER & OTHER_CONF_IMAGE_FUZZY_HASH)) {
+                    // It's okay if it fails to calculate the fuzzy hash.
+                    (void)calculate_fuzzy_image_hash(ctx, type);
+                }
             }
-
-            if (CL_SUCCESS != ret) {
-                // do not calculate the fuzzy image hash if parsing failed, or a heuristic alert occured.
-                break;
-            }
-
-            // It's okay if it fails to calculate the fuzzy hash.
-            (void)calculate_fuzzy_image_hash(ctx, type);
-
             break;
         }
 
         case CL_TYPE_PNG: {
-            if (SCAN_HEURISTICS && (DCONF_OTHER & OTHER_CONF_PNG)) {
-                ret = cli_parsepng(ctx); /* PNG parser detects a couple CVE's as well as Broken.Media */
+            if (SCAN_PARSE_IMAGE && (DCONF_OTHER & OTHER_CONF_PNG)) {
+                if (SCAN_HEURISTICS && SCAN_HEURISTIC_BROKEN_MEDIA) {
+                    /*
+                     * Parse PNG files, checking for exploits and other file format issues.
+                     */
+                    ret = cli_parsepng(ctx); /* PNG parser detects a couple CVE's as well as Broken.Media */
+                    if (CL_SUCCESS != ret) {
+                        // do not calculate the fuzzy image hash if parsing failed, or a heuristic alert occurred.
+                        break;
+                    }
+                }
+
+                if (SCAN_PARSE_IMAGE_FUZZY_HASH && (DCONF_OTHER & OTHER_CONF_IMAGE_FUZZY_HASH)) {
+                    // It's okay if it fails to calculate the fuzzy hash.
+                    (void)calculate_fuzzy_image_hash(ctx, type);
+                }
             }
-
-            if (CL_SUCCESS != ret) {
-                // do not calculate the fuzzy image hash if parsing failed, or a heuristic alert occured.
-                break;
-            }
-
-            // It's okay if it fails to calculate the fuzzy hash.
-            (void)calculate_fuzzy_image_hash(ctx, type);
-
             break;
         }
 
         case CL_TYPE_JPEG: {
-            if (SCAN_HEURISTICS && (DCONF_OTHER & OTHER_CONF_JPEG)) {
-                ret = cli_parsejpeg(ctx); /* JPG parser detects MS04-028 exploits as well as Broken.Media */
+            if (SCAN_PARSE_IMAGE && (DCONF_OTHER & OTHER_CONF_JPEG)) {
+                if (SCAN_HEURISTICS && SCAN_HEURISTIC_BROKEN_MEDIA) {
+                    /*
+                     * Parse JPEG files, checking for exploits and other file format issues.
+                     *
+                     * Note: JPEG 2000 is a very different format from JPEG, JPEG/JFIF, JPEG/Exif, JPEG/SPIFF (1994, 1997)
+                     * JPEG 2000 is not checked by cli_parsejpeg.
+                     */
+                    ret = cli_parsejpeg(ctx); /* JPG parser detects MS04-028 exploits as well as Broken.Media */
+                    if (CL_SUCCESS != ret) {
+                        // do not calculate the fuzzy image hash if parsing failed, or a heuristic alert occurred.
+                        break;
+                    }
+                }
+
+                if (SCAN_PARSE_IMAGE_FUZZY_HASH && (DCONF_OTHER & OTHER_CONF_IMAGE_FUZZY_HASH)) {
+                    // It's okay if it fails to calculate the fuzzy hash.
+                    (void)calculate_fuzzy_image_hash(ctx, type);
+                }
             }
-
-            if (CL_SUCCESS != ret) {
-                // do not calculate the fuzzy image hash if parsing failed, or a heuristic alert occured.
-                break;
-            }
-
-            // It's okay if it fails to calculate the fuzzy hash.
-            (void)calculate_fuzzy_image_hash(ctx, type);
-
             break;
         }
 
         case CL_TYPE_TIFF: {
-            if (SCAN_HEURISTICS && SCAN_HEURISTIC_BROKEN_MEDIA && (DCONF_OTHER & OTHER_CONF_TIFF) && ret != CL_VIRUS) {
-                ret = cli_parsetiff(ctx);
+            if (SCAN_PARSE_IMAGE && (DCONF_OTHER & OTHER_CONF_TIFF)) {
+                if (SCAN_HEURISTICS && SCAN_HEURISTIC_BROKEN_MEDIA) {
+                    /*
+                     * Parse TIFF files, checking for exploits and other file format issues.
+                     */
+                    ret = cli_parsetiff(ctx);
+                    if (CL_SUCCESS != ret) {
+                        // do not calculate the fuzzy image hash if parsing failed, or a heuristic alert occurred.
+                        break;
+                    }
+                }
+
+                if (SCAN_PARSE_IMAGE_FUZZY_HASH && (DCONF_OTHER & OTHER_CONF_IMAGE_FUZZY_HASH)) {
+                    // It's okay if it fails to calculate the fuzzy hash.
+                    (void)calculate_fuzzy_image_hash(ctx, type);
+                }
             }
-
-            if (CL_SUCCESS != ret) {
-                // do not calculate the fuzzy image hash if parsing failed, or a heuristic alert occured.
-                break;
-            }
-
-            // It's okay if it fails to calculate the fuzzy hash.
-            (void)calculate_fuzzy_image_hash(ctx, type);
-
             break;
         }
 
@@ -4888,7 +5389,7 @@ cl_error_t cli_magic_scan(cli_ctx *ctx, cli_file_t type)
 
     /* CL_TYPE_HTML: raw HTML files are not scanned, unless safety measure activated via DCONF */
     if (type != CL_TYPE_IGNORED && (type != CL_TYPE_HTML || !(SCAN_PARSE_HTML) || !(DCONF_DOC & DOC_CONF_HTML_SKIPRAW)) && !ctx->engine->sdb) {
-        ret = scanraw(ctx, type, typercg, &dettype, (ctx->engine->engine_options & ENGINE_OPTIONS_DISABLE_CACHE) ? NULL : hash);
+        ret = scanraw(ctx, type, typercg, &dettype, hash);
 
         // Evaluate the result from the scan to see if it end the scan of this layer early,
         // and to decid if we should propagate an error or not.
@@ -4947,6 +5448,7 @@ cl_error_t cli_magic_scan(cli_ctx *ctx, cli_file_t type)
             perf_nested_stop(ctx, PERFT_MACHO, PERFT_SCAN);
             break;
 
+        case CL_TYPE_PYTHON_COMPILED:
         case CL_TYPE_BINARY_DATA:
             ret = cli_scan_fmap(ctx, CL_TYPE_OTHER, false, NULL, AC_SCAN_VIR, NULL, NULL);
             break;
@@ -4971,9 +5473,7 @@ done:
         ctx->hook_lsig_matches = old_hook_lsig_matches;
     }
 
-#if HAVE_JSON
     ctx->wrkproperty = (struct json_object *)(parent_property);
-#endif
 
     /*
      * Determine if there was an alert for this layer (or its children).
@@ -5049,11 +5549,9 @@ early_ret:
         ctx->sub_tmpdir = old_temp_path;
     }
 
-#if HAVE_JSON
     if (NULL != parent_property) {
         ctx->wrkproperty = (struct json_object *)(parent_property);
     }
-#endif
 
     return ret;
 }
@@ -5310,7 +5808,7 @@ cl_error_t cli_magic_scan_buff(const void *buffer, size_t length, cli_ctx *ctx, 
  * @param engine            The scanning engine.
  * @param scanoptions       Scanning options.
  * @param[in,out] context   An opaque context structure allowing the caller to record details about the sample being scanned.
- * @return int              CL_CLEAN, CL_VIRUS, or an error code if an error occured during the scan.
+ * @return int              CL_CLEAN, CL_VIRUS, or an error code if an error occurred during the scan.
  */
 static cl_error_t scan_common(cl_fmap_t *map, const char *filepath, const char **virname, unsigned long int *scanned, const struct cl_engine *engine, struct cl_scan_options *scanoptions, void *context)
 {
@@ -5320,7 +5818,7 @@ static cl_error_t scan_common(cl_fmap_t *map, const char *filepath, const char *
 
     cli_ctx ctx = {0};
 
-    bool logg_initalized = false;
+    bool logg_initialized = false;
 
     char *target_basename = NULL;
     char *new_temp_prefix = NULL;
@@ -5340,7 +5838,7 @@ static cl_error_t scan_common(cl_fmap_t *map, const char *filepath, const char *
 
     ctx.engine  = engine;
     ctx.scanned = scanned;
-    MALLOC(ctx.options, sizeof(struct cl_scan_options), status = CL_EMEM);
+    CLI_MALLOC_OR_GOTO_DONE(ctx.options, sizeof(struct cl_scan_options), status = CL_EMEM);
 
     memcpy(ctx.options, scanoptions, sizeof(struct cl_scan_options));
 
@@ -5355,7 +5853,7 @@ static cl_error_t scan_common(cl_fmap_t *map, const char *filepath, const char *
     }
 
     ctx.recursion_stack_size = ctx.engine->max_recursion_level;
-    ctx.recursion_stack      = cli_calloc(sizeof(recursion_level_t), ctx.recursion_stack_size);
+    ctx.recursion_stack      = calloc(sizeof(recursion_level_t), ctx.recursion_stack_size);
     if (!ctx.recursion_stack) {
         status = CL_EMEM;
         goto done;
@@ -5414,7 +5912,7 @@ static cl_error_t scan_common(cl_fmap_t *map, const char *filepath, const char *
         (CL_SUCCESS == cli_basename(ctx.target_filepath, strlen(ctx.target_filepath), &target_basename))) {
         /* Include the basename in the temp directory */
         new_temp_prefix_len = strlen("YYYYMMDD_HHMMSS-") + strlen(target_basename);
-        new_temp_prefix     = cli_calloc(1, new_temp_prefix_len + 1);
+        new_temp_prefix     = cli_max_calloc(1, new_temp_prefix_len + 1);
         if (!new_temp_prefix) {
             cli_errmsg("scan_common: Failed to allocate memory for temp directory name.\n");
             status = CL_EMEM;
@@ -5425,7 +5923,7 @@ static cl_error_t scan_common(cl_fmap_t *map, const char *filepath, const char *
     } else {
         /* Just use date */
         new_temp_prefix_len = strlen("YYYYMMDD_HHMMSS-scantemp");
-        new_temp_prefix     = cli_calloc(1, new_temp_prefix_len + 1);
+        new_temp_prefix     = cli_max_calloc(1, new_temp_prefix_len + 1);
         if (!new_temp_prefix) {
             cli_errmsg("scan_common: Failed to allocate memory for temp directory name.\n");
             status = CL_EMEM;
@@ -5452,24 +5950,98 @@ static cl_error_t scan_common(cl_fmap_t *map, const char *filepath, const char *
     }
 
     cli_logg_setup(&ctx);
-    logg_initalized = true;
-
-    /* We have a limit of around 2GB (INT_MAX - 2). Enforce it here. */
-    /* TODO: Large file support is large-ly untested. Remove this restriction
-     * and test with a large set of large files of various types. libclamav's
-     * integer type safety has come a long way since 2014, so it's possible
-     * we could lift this restriction, but at least one of the parsers is
-     * bound to behave badly with large files. */
-    if (map->len > INT_MAX - 2) {
-        if (scanoptions->heuristic & CL_SCAN_HEURISTIC_EXCEEDS_MAX) {
-            status = cli_append_potentially_unwanted(&ctx, "Heuristics.Limits.Exceeded.MaxFileSize");
-        } else {
-            status = CL_CLEAN;
-        }
-        goto done;
-    }
+    logg_initialized = true;
 
     status = cli_magic_scan(&ctx, CL_TYPE_ANY);
+
+    if (ctx.options->general & CL_SCAN_GENERAL_COLLECT_METADATA && (ctx.properties != NULL)) {
+        json_object *jobj;
+        const char *jstring;
+
+        /* set value of unique root object tag */
+        if (json_object_object_get_ex(ctx.properties, "FileType", &jobj)) {
+            enum json_type type;
+            const char *jstr;
+
+            type = json_object_get_type(jobj);
+            if (type == json_type_string) {
+                jstr = json_object_get_string(jobj);
+                cli_jsonstr(ctx.properties, "RootFileType", jstr);
+            }
+        }
+
+        /* serialize json properties to string */
+#ifdef JSON_C_TO_STRING_NOSLASHESCAPE
+        jstring = json_object_to_json_string_ext(ctx.properties, JSON_C_TO_STRING_PRETTY | JSON_C_TO_STRING_NOSLASHESCAPE);
+#else
+        jstring = json_object_to_json_string_ext(ctx.properties, JSON_C_TO_STRING_PRETTY);
+#endif
+        if (NULL == jstring) {
+            cli_errmsg("scan_common: no memory for json serialization.\n");
+            status = CL_EMEM;
+            goto done;
+        }
+
+        cli_dbgmsg("%s\n", jstring);
+
+        if (status != CL_VIRUS) {
+            /*
+             * Run bytecode preclass hook.
+             */
+            struct cli_matcher *iroot = ctx.engine->root[13];
+
+            struct cli_bc_ctx *bc_ctx = cli_bytecode_context_alloc();
+            if (!bc_ctx) {
+                cli_errmsg("scan_common: can't allocate memory for bc_ctx\n");
+                status = CL_EMEM;
+            } else {
+                cli_bytecode_context_setctx(bc_ctx, &ctx);
+                status = cli_bytecode_runhook(&ctx, ctx.engine, bc_ctx, BC_PRECLASS, map);
+                cli_bytecode_context_destroy(bc_ctx);
+            }
+
+            /* backwards compatibility: scan the json string unless a virus was detected */
+            if (status != CL_VIRUS && (iroot->ac_lsigs || iroot->ac_patterns || iroot->pcre_metas)) {
+                cli_dbgmsg("scan_common: running deprecated preclass bytecodes for target type 13\n");
+                ctx.options->general &= ~CL_SCAN_GENERAL_COLLECT_METADATA;
+                status = cli_magic_scan_buff(jstring, strlen(jstring), &ctx, NULL, LAYER_ATTRIBUTES_NONE);
+            }
+        }
+
+        /*
+         * Invoke file props callback.
+         */
+        if (ctx.engine->cb_file_props != NULL) {
+            ret = ctx.engine->cb_file_props(jstring, status, ctx.cb_ctx);
+            if (ret != CL_SUCCESS) {
+                status = ret;
+            }
+        }
+
+        /*
+         * Write the file properties metadata JSON to metadata.json if keeptmp is enabled.
+         */
+        if (ctx.engine->keeptmp) {
+            int fd        = -1;
+            char *tmpname = NULL;
+
+            if ((ret = cli_newfilepathfd(ctx.sub_tmpdir, "metadata.json", &tmpname, &fd)) != CL_SUCCESS) {
+                cli_dbgmsg("scan_common: Can't create json properties file, ret = %i.\n", ret);
+            } else {
+                if ((size_t)-1 == cli_writen(fd, jstring, strlen(jstring))) {
+                    cli_dbgmsg("scan_common: cli_writen error writing json properties file.\n");
+                } else {
+                    cli_dbgmsg("json written to: %s\n", tmpname);
+                }
+            }
+            if (fd != -1) {
+                close(fd);
+            }
+            if (NULL != tmpname) {
+                free(tmpname);
+            }
+        }
+    }
 
     // If any alerts occurred, set the output pointer to the "latest" alert signature name.
     if (0 < evidence_num_alerts(ctx.evidence)) {
@@ -5522,101 +6094,6 @@ static cl_error_t scan_common(cl_fmap_t *map, const char *filepath, const char *
         }
     }
 
-#if HAVE_JSON
-    if (ctx.options->general & CL_SCAN_GENERAL_COLLECT_METADATA && (ctx.properties != NULL)) {
-        json_object *jobj;
-        const char *jstring;
-
-        /* set value of unique root object tag */
-        if (json_object_object_get_ex(ctx.properties, "FileType", &jobj)) {
-            enum json_type type;
-            const char *jstr;
-
-            type = json_object_get_type(jobj);
-            if (type == json_type_string) {
-                jstr = json_object_get_string(jobj);
-                cli_jsonstr(ctx.properties, "RootFileType", jstr);
-            }
-        }
-
-        /* serialize json properties to string */
-#ifdef JSON_C_TO_STRING_NOSLASHESCAPE
-        jstring = json_object_to_json_string_ext(ctx.properties, JSON_C_TO_STRING_PRETTY | JSON_C_TO_STRING_NOSLASHESCAPE);
-#else
-        jstring = json_object_to_json_string_ext(ctx.properties, JSON_C_TO_STRING_PRETTY);
-#endif
-        if (NULL == jstring) {
-            cli_errmsg("scan_common: no memory for json serialization.\n");
-            status = CL_EMEM;
-            goto done;
-        }
-
-        cli_dbgmsg("%s\n", jstring);
-
-        if (status != CL_VIRUS) {
-            /*
-             * Run bytecode preclass hook.
-             */
-            struct cli_matcher *iroot = ctx.engine->root[13];
-
-            struct cli_bc_ctx *bc_ctx = cli_bytecode_context_alloc();
-            if (!bc_ctx) {
-                cli_errmsg("scan_common: can't allocate memory for bc_ctx\n");
-                status = CL_EMEM;
-            } else {
-                cli_bytecode_context_setctx(bc_ctx, &ctx);
-                status = cli_bytecode_runhook(&ctx, ctx.engine, bc_ctx, BC_PRECLASS, map);
-                cli_bytecode_context_destroy(bc_ctx);
-            }
-
-            /* backwards compatibility: scan the json string unless a virus was detected */
-            if (status != CL_VIRUS && (iroot->ac_lsigs || iroot->ac_patterns
-#ifdef HAVE_PCRE
-                                       || iroot->pcre_metas
-#endif // HAVE_PCRE
-                                       )) {
-                cli_dbgmsg("scan_common: running deprecated preclass bytecodes for target type 13\n");
-                ctx.options->general &= ~CL_SCAN_GENERAL_COLLECT_METADATA;
-                status = cli_magic_scan_buff(jstring, strlen(jstring), &ctx, NULL, LAYER_ATTRIBUTES_NONE);
-            }
-        }
-
-        /*
-         * Invoke file props callback.
-         */
-        if (ctx.engine->cb_file_props != NULL) {
-            ret = ctx.engine->cb_file_props(jstring, status, ctx.cb_ctx);
-            if (ret != CL_SUCCESS) {
-                status = ret;
-            }
-        }
-
-        /*
-         * Write the file properties metadata JSON to metadata.json if keeptmp is enabled.
-         */
-        if (ctx.engine->keeptmp) {
-            int fd        = -1;
-            char *tmpname = NULL;
-
-            if ((ret = cli_newfilepathfd(ctx.sub_tmpdir, "metadata.json", &tmpname, &fd)) != CL_SUCCESS) {
-                cli_dbgmsg("scan_common: Can't create json properties file, ret = %i.\n", ret);
-            } else {
-                if ((size_t)-1 == cli_writen(fd, jstring, strlen(jstring))) {
-                    cli_dbgmsg("scan_common: cli_writen error writing json properties file.\n");
-                } else {
-                    cli_dbgmsg("json written to: %s\n", tmpname);
-                }
-            }
-            if (fd != -1) {
-                close(fd);
-            }
-            if (NULL != tmpname) {
-                free(tmpname);
-            }
-        }
-    }
-#endif // HAVE_JSON
-
     if (verdict != CL_CLEAN) {
         // Reporting "VIRUS" is more important than reporting and error,
         // because... unfortunately we can only do one with the current API.
@@ -5628,7 +6105,7 @@ done:
     // And to convert CL_VERIFIED -> CL_CLEAN
     (void)result_should_goto_done(&ctx, status, &status);
 
-    if (logg_initalized) {
+    if (logg_initialized) {
         cli_logg_unsetup();
     }
 
@@ -5694,8 +6171,12 @@ cl_error_t cl_scandesc_callback(int desc, const char *filename, const char **vir
     if ((engine->maxfilesize > 0) && ((uint64_t)sb.st_size > engine->maxfilesize)) {
         cli_dbgmsg("cl_scandesc_callback: File too large (" STDu64 " bytes), ignoring\n", (uint64_t)sb.st_size);
         if (scanoptions->heuristic & CL_SCAN_HEURISTIC_EXCEEDS_MAX) {
-            if (engine->cb_virus_found)
+            if (engine->cb_virus_found) {
                 engine->cb_virus_found(desc, "Heuristics.Limits.Exceeded.MaxFileSize", context);
+                if (virname) {
+                    *virname = "Heuristics.Limits.Exceeded.MaxFileSize";
+                }
+            }
             status = CL_VIRUS;
         } else {
             status = CL_CLEAN;
@@ -5731,8 +6212,12 @@ cl_error_t cl_scanmap_callback(cl_fmap_t *map, const char *filename, const char 
     if ((engine->maxfilesize > 0) && (map->len > engine->maxfilesize)) {
         cli_dbgmsg("cl_scandesc_callback: File too large (%zu bytes), ignoring\n", map->len);
         if (scanoptions->heuristic & CL_SCAN_HEURISTIC_EXCEEDS_MAX) {
-            if (engine->cb_virus_found)
+            if (engine->cb_virus_found) {
                 engine->cb_virus_found(fmap_fd(map), "Heuristics.Limits.Exceeded.MaxFileSize", context);
+                if (virname) {
+                    *virname = "Heuristics.Limits.Exceeded.MaxFileSize";
+                }
+            }
             return CL_VIRUS;
         }
         return CL_CLEAN;

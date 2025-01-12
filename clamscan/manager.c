@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2007-2013 Sourcefire, Inc.
  *
  *  Authors: Tomasz Kojm
@@ -56,6 +56,7 @@
 #include "matcher-pcre.h"
 #include "str.h"
 #include "readdb.h"
+#include "default.h"
 
 // common
 #include "optparser.h"
@@ -1050,7 +1051,7 @@ int scanmanager(const struct optstruct *opts)
     struct engine_free_progress engine_free_progress_ctx = {0};
 #endif
 
-    /* Initalize scan options struct */
+    /* Initialize scan options struct */
     memset(&options, 0, sizeof(struct cl_scan_options));
 
     dirlnk = optget(opts, "follow-dir-symlinks")->numarg;
@@ -1116,6 +1117,8 @@ int scanmanager(const struct optstruct *opts)
 #endif
     }
 
+    if ((opt = optget(opts, "cache-size"))->enabled)
+        cl_engine_set_num(engine, CL_ENGINE_CACHE_SIZE, opt->numarg);
     if (optget(opts, "disable-cache")->enabled)
         cl_engine_set_num(engine, CL_ENGINE_DISABLE_CACHE, 1);
 
@@ -1234,18 +1237,8 @@ int scanmanager(const struct optstruct *opts)
         }
     }
 
-    /* JSON check to prevent engine loading if specified without libjson-c  */
-#if HAVE_JSON
     if (optget(opts, "gen-json")->enabled)
         options.general |= CL_SCAN_GENERAL_COLLECT_METADATA;
-#else
-    if (optget(opts, "gen-json")->enabled) {
-        logg(LOGG_ERROR, "Can't generate json (gen-json). libjson-c dev library was missing or misconfigured when ClamAV was built.\n");
-
-        ret = 2;
-        goto done;
-    }
-#endif
 
     if ((opt = optget(opts, "tempdir"))->enabled) {
         if ((ret = cl_engine_set_str(engine, CL_ENGINE_TMPDIR, opt->strarg))) {
@@ -1258,6 +1251,22 @@ int scanmanager(const struct optstruct *opts)
 
     if ((opt = optget(opts, "database"))->active) {
         while (opt) {
+            if (optget(opts, "fail-if-cvd-older-than")->enabled) {
+                if (LSTAT(opt->strarg, &sb) == -1) {
+                    logg(LOGG_ERROR, "Can't access database directory/file: %s\n", opt->strarg);
+                    ret = 2;
+                    goto done;
+                }
+                if (!S_ISDIR(sb.st_mode) && !CLI_DBEXT_SIGNATURE(opt->strarg)) {
+                    opt = opt->nextarg;
+                    continue;
+                }
+                if (check_if_cvd_outdated(opt->strarg, optget(opts, "fail-if-cvd-older-than")->numarg) != CL_SUCCESS) {
+                    ret = 2;
+                    goto done;
+                }
+            }
+
             if ((ret = cl_load(opt->strarg, engine, &info.sigs, dboptions))) {
                 logg(LOGG_ERROR, "%s\n", cl_strerror(ret));
 
@@ -1269,6 +1278,13 @@ int scanmanager(const struct optstruct *opts)
         }
     } else {
         char *dbdir = freshdbdir();
+
+        if (optget(opts, "fail-if-cvd-older-than")->enabled) {
+            if (check_if_cvd_outdated(dbdir, optget(opts, "fail-if-cvd-older-than")->numarg) != CL_SUCCESS) {
+                ret = 2;
+                goto done;
+            }
+        }
 
         if ((ret = cl_load(dbdir, engine, &info.sigs, dboptions))) {
             logg(LOGG_ERROR, "%s\n", cl_strerror(ret));
@@ -1373,6 +1389,13 @@ int scanmanager(const struct optstruct *opts)
     }
 
     if ((opt = optget(opts, "max-recursion"))->active) {
+        uint32_t opt_value = opt->numarg;
+        if ((0 == opt_value) || (opt_value > CLI_MAX_MAXRECLEVEL)) {
+            logg(LOGG_ERROR, "max-recursion set to %u, but  cannot be larger than %u, and cannot be 0.\n",
+                 opt_value, CLI_MAX_MAXRECLEVEL);
+            ret = 2;
+            goto done;
+        }
         if ((ret = cl_engine_set_num(engine, CL_ENGINE_MAX_RECURSION, opt->numarg))) {
             logg(LOGG_ERROR, "cli_engine_set_num(CL_ENGINE_MAX_RECURSION) failed: %s\n", cl_strerror(ret));
             ret = 2;
@@ -1536,10 +1559,23 @@ int scanmanager(const struct optstruct *opts)
     if (optget(opts, "scan-hwp3")->enabled)
         options.parse |= CL_SCAN_PARSE_HWP3;
 
+    if (optget(opts, "scan-onenote")->enabled)
+        options.parse |= CL_SCAN_PARSE_ONENOTE;
+
+    if (optget(opts, "scan-image")->enabled)
+        options.parse |= CL_SCAN_PARSE_IMAGE;
+
+    if (optget(opts, "scan-image-fuzzy-hash")->enabled)
+        options.parse |= CL_SCAN_PARSE_IMAGE_FUZZY_HASH;
+
     /* TODO: Remove deprecated option in a future feature release */
     if ((optget(opts, "algorithmic-detection")->enabled) && /* && used due to default-yes for both options */
         (optget(opts, "heuristic-alerts")->enabled)) {
         options.general |= CL_SCAN_GENERAL_HEURISTICS;
+    }
+
+    if (optget(opts, "json-store-html-urls")->enabled) {
+        options.general |= CL_SCAN_GENERAL_STORE_HTML_URLS;
     }
 
     /* TODO: Remove deprecated option in a future feature release */
@@ -1635,7 +1671,7 @@ int scanmanager(const struct optstruct *opts)
          * so just scan the current directory. */
         char cwd[1024];
 
-        /* Get the current workinng directory.
+        /* Get the current working directory.
          * we need full path for some reasons (eg. archive handling) */
         if (!getcwd(cwd, sizeof(cwd))) {
             logg(LOGG_ERROR, "Can't get absolute pathname of current working directory\n");
@@ -1651,13 +1687,11 @@ int scanmanager(const struct optstruct *opts)
             if (!strcasecmp(opt->strarg, "bytecode")) {
                 cli_sigperf_print();
                 cli_sigperf_events_destroy();
-            }
-#if HAVE_PCRE
-            else if (!strcasecmp(opt->strarg, "pcre")) {
+            } else if (!strcasecmp(opt->strarg, "pcre")) {
                 cli_pcre_perf_print();
                 cli_pcre_perf_events_destroy();
             }
-#endif
+
             opt = opt->nextarg;
         }
     }

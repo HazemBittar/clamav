@@ -15,9 +15,7 @@
 #include <sys/mman.h>
 #endif
 
-#if HAVE_LIBXML2
 #include <libxml/parser.h>
-#endif
 
 #include "platform.h"
 
@@ -79,7 +77,7 @@ START_TEST(test_cl_build)
     // ck_assert_msg(engine, "cl_build calloc");
     // ck_assert_msg(CL_ENULLARG == cl_build(engine), "cl_build(engine) with null ->root");
 
-    // engine->root = cli_calloc(CL_TARGET_TABLE_SIZE, sizeof(struct cli_matcher *));
+    // engine->root = calloc(CL_TARGET_TABLE_SIZE, sizeof(struct cli_matcher *));
 }
 END_TEST
 
@@ -533,7 +531,7 @@ END_TEST
 static char **testfiles     = NULL;
 static unsigned testfiles_n = 0;
 
-static const int expected_testfiles = 49;
+static const int expected_testfiles = 52;
 
 static unsigned skip_files(void)
 {
@@ -544,18 +542,6 @@ static unsigned skip_files(void)
     if (s && !strcmp(s, "1")) {
         skipped += 2;
     }
-
-    /* skip .bz2 files if bzip is disabled */
-#if HAVE_BZLIB_H
-#else
-    skipped += 2;
-#endif
-
-    /* skip [placeholder] files if xml is disabled */
-#if HAVE_LIBXML2
-#else
-    skipped += 0;
-#endif
 
 #if HAVE_UNRAR
 #else
@@ -581,8 +567,8 @@ static void init_testfiles(void)
         if (strncmp(dirent->d_name, "clam", 4))
             continue;
         i++;
-        testfiles = cli_realloc(testfiles, i * sizeof(*testfiles));
-        ck_assert_msg(!!testfiles, "cli_realloc");
+        testfiles = cli_safer_realloc(testfiles, i * sizeof(*testfiles));
+        ck_assert_msg(!!testfiles, "cli_safer_realloc");
         testfiles[i - 1] = strdup(dirent->d_name);
     }
     testfiles_n = i;
@@ -856,7 +842,7 @@ START_TEST(test_fmap_duplicate)
     dup_map = NULL;
 
     /*
-     * Test duplicate of map omiting the last 2 bytes
+     * Test duplicate of map omitting the last 2 bytes
      */
     cli_dbgmsg("duplicating map with shorter len\n");
     dup_map = fmap_duplicate(map, 0, map->len - 2, "short duplicate");
@@ -870,7 +856,7 @@ START_TEST(test_fmap_duplicate)
     ck_assert(0 == memcmp(map_data, tmp, 4));
 
     /*
-     * Test duplicate of the duplicate omiting the last 2 bytes again (so just the first 2 bytes)
+     * Test duplicate of the duplicate omitting the last 2 bytes again (so just the first 2 bytes)
      */
     cli_dbgmsg("duplicating dup_map with shorter len\n");
     dup_dup_map = fmap_duplicate(dup_map, 0, dup_map->len - 2, "double short duplicate");
@@ -905,7 +891,7 @@ START_TEST(test_fmap_duplicate)
     ck_assert(0 == memcmp(map_data + 2, tmp, 4));
 
     /*
-     * Test duplicate of the duplicate omiting the last 2 bytes again (so just the middle 2 bytes)
+     * Test duplicate of the duplicate omitting the last 2 bytes again (so just the middle 2 bytes)
      */
     cli_dbgmsg("duplicating dup_map with shorter len\n");
     dup_dup_map = fmap_duplicate(dup_map, 0, dup_map->len - 2, "offset short duplicate");
@@ -1206,12 +1192,12 @@ START_TEST(test_fmap_assorted_api)
     ck_assert_msg(fmap_dump_fd != -1, "fmap_dump_fd failed");
     cli_dbgmsg("dumped map to %s\n", fmap_dump_filepath);
 
-    fd_based_map = fmap(fmap_dump_fd, 0, 0, NULL); // using fmap() instead of cl_fmap_open_handle() because I don't want to have to stat the the file to figure out the len. fmap() does that for us.
+    fd_based_map = fmap(fmap_dump_fd, 0, 0, NULL); // using fmap() instead of cl_fmap_open_handle() because I don't want to have to stat the file to figure out the len. fmap() does that for us.
     ck_assert_msg(!!fd_based_map, "cl_fmap_open_handle failed");
     cli_dbgmsg("created fmap from file descriptor\n");
 
     /*
-     * Test those same things things on an fmap created with an fd that is a dumped copy of the original map.
+     * Test those same things on an fmap created with an fd that is a dumped copy of the original map.
      */
     fmap_api_tests(fd_based_map, FMAP_TEST_STRING, sizeof(FMAP_TEST_STRING), "handle map");
 
@@ -1230,7 +1216,7 @@ START_TEST(test_fmap_assorted_api)
     ck_assert_msg(dup_map->real_len == sizeof(FMAP_TEST_STRING), "%zu != %zu", dup_map->real_len, sizeof(FMAP_TEST_STRING));
 
     /*
-     * Test those same things things on an fmap created with an fd that is a dumped copy of the original map.
+     * Test those same things on an fmap created with an fd that is a dumped copy of the original map.
      */
     fmap_api_tests(dup_map, FMAP_TEST_STRING_PART_2, sizeof(FMAP_TEST_STRING_PART_2), "nested mem map");
 
@@ -1254,7 +1240,7 @@ START_TEST(test_fmap_assorted_api)
     ck_assert_msg(dup_map->real_len == sizeof(FMAP_TEST_STRING), "%zu != %zu", dup_map->real_len, sizeof(FMAP_TEST_STRING));
 
     /*
-     * Test those same things things on an fmap created with an fd that is a dumped copy of the original map.
+     * Test those same things on an fmap created with an fd that is a dumped copy of the original map.
      */
     fmap_api_tests(dup_map, FMAP_TEST_STRING_PART_2, sizeof(FMAP_TEST_STRING_PART_2), "nested handle map");
 
@@ -1270,7 +1256,7 @@ START_TEST(test_fmap_assorted_api)
     free_duplicate_fmap(dup_map);
     dup_map = NULL;
 
-    /* We can close the fd-based map now that we're done with it's duplicate */
+    /* We can close the fd-based map now that we're done with its duplicate */
     cl_fmap_close(fd_based_map);
     fd_based_map = NULL;
 
@@ -1288,12 +1274,12 @@ START_TEST(test_fmap_assorted_api)
     /*
      * Let's make an fmap of the dumped nested map, and run the tests to verify that everything is as expected.
      */
-    fd_based_dup_map = fmap(dup_fmap_dump_fd, 0, 0, NULL); // using fmap() instead of cl_fmap_open_handle() because I don't want to have to stat the the file to figure out the len. fmap() does that for us.
+    fd_based_dup_map = fmap(dup_fmap_dump_fd, 0, 0, NULL); // using fmap() instead of cl_fmap_open_handle() because I don't want to have to stat the file to figure out the len. fmap() does that for us.
     ck_assert_msg(!!fd_based_dup_map, "cl_fmap_open_handle failed");
     cli_dbgmsg("created fmap from file descriptor\n");
 
     /*
-     * Test those same things things on an fmap created with an fd that is a dumped copy of the original map.
+     * Test those same things on an fmap created with an fd that is a dumped copy of the original map.
      */
     fmap_api_tests(fd_based_dup_map, FMAP_TEST_STRING_PART_2, sizeof(FMAP_TEST_STRING_PART_2), "dumped nested handle map");
 
@@ -1921,8 +1907,8 @@ int open_testfile(const char *name, int flags)
         srcdir = SRCDIR;
     }
 
-    str = cli_malloc(strlen(name) + strlen(srcdir) + 2);
-    ck_assert_msg(!!str, "cli_malloc");
+    str = malloc(strlen(name) + strlen(srcdir) + 2);
+    ck_assert_msg(!!str, "malloc");
     sprintf(str, "%s" PATHSEP "%s", srcdir, name);
 
     fd = open(str, flags);
@@ -1935,7 +1921,7 @@ void diff_file_mem(int fd, const char *ref, size_t len)
 {
     char c1, c2;
     size_t p, reflen = len;
-    char *buf = cli_malloc(len);
+    char *buf = malloc(len);
 
     ck_assert_msg(!!buf, "unable to malloc buffer: %zu", len);
     p = read(fd, buf, len);
@@ -1964,7 +1950,7 @@ void diff_files(int fd, int ref_fd)
     off_t siz = lseek(ref_fd, 0, SEEK_END);
     ck_assert_msg(siz != -1, "lseek failed");
 
-    ref = cli_malloc(siz);
+    ref = malloc(siz);
     ck_assert_msg(!!ref, "unable to malloc buffer: " STDi64, (int64_t)siz);
 
     ck_assert_msg(lseek(ref_fd, 0, SEEK_SET) == 0, "lseek failed");
@@ -2027,11 +2013,14 @@ static void check_version_compatible()
 }
 #endif
 
-int main(void)
+int main(int argc, char **argv)
 {
     int nf;
     Suite *s;
     SRunner *sr;
+
+    UNUSEDPARAM(argc);
+    UNUSEDPARAM(argv);
 
     cl_initialize_crypto();
 
@@ -2055,7 +2044,9 @@ int main(void)
 
     srunner_set_log(sr, OBJDIR PATHSEP "test.log");
     if (freopen(OBJDIR PATHSEP "test-stderr.log", "w+", stderr) == NULL) {
-        fputs("Unable to redirect stderr!\n", stderr);
+        // The stderr FILE pointer may be closed by `freopen()` even if redirecting to the log file files.
+        // So we will output the error message to stdout instead.
+        fputs("Unable to redirect stderr!\n", stdout);
     }
     cl_debug();
 
@@ -2065,9 +2056,7 @@ int main(void)
         printf("NOTICE: Use the 'T' environment variable to adjust testcase timeout\n");
     srunner_free(sr);
 
-#if HAVE_LIBXML2
     xmlCleanupParser();
-#endif
 
     return (nf == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

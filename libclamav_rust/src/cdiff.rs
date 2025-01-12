@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2021-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2021-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *
  *  Authors: John Humlick
  *
@@ -25,8 +25,8 @@ use std::{
     io::{prelude::*, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     iter::*,
     os::raw::c_char,
-    path::PathBuf,
-    str,
+    path::{Path, PathBuf},
+    str::{self, FromStr},
 };
 
 use crate::sys;
@@ -36,7 +36,6 @@ use crate::validate_str_param;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use log::{debug, error, warn};
 use sha2::{Digest, Sha256};
-use thiserror::Error;
 
 /// Size of a digital signature
 const SIG_SIZE: usize = 350;
@@ -88,8 +87,8 @@ struct Context {
 }
 
 /// Possible errors returned by cdiff_apply() and script2cdiff
-#[derive(Debug, Error)]
-pub enum CdiffError {
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
     #[error("Error in header: {0}")]
     Header(#[from] HeaderError),
 
@@ -97,8 +96,12 @@ pub enum CdiffError {
     ///
     /// This error *may* wrap a processing error if the command has side effects
     /// (e.g., MOVE or CLOSE)
-    #[error("{1} on line {0}")]
-    Input(usize, InputError),
+    #[error("{err} on line {line}: {operation}")]
+    Input {
+        line: usize,
+        err: InputError,
+        operation: String,
+    },
 
     /// An error encountered while handling a particular CDiff command
     #[error("processing {1} command on line {2}: {0}")]
@@ -147,7 +150,7 @@ pub enum CdiffError {
 
 /// Errors particular to input handling (i.e., syntax, or side effects from
 /// handling input)
-#[derive(Error, Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum InputError {
     #[error("Unsupported command provided: {0}")]
     UnknownCommand(String),
@@ -155,14 +158,20 @@ pub enum InputError {
     #[error("No DB open for action {0}")]
     NoDBForAction(&'static str),
 
+    #[error("Invalid DB \"{0}\" open for action {1}")]
+    InvalidDBForAction(String, &'static str),
+
     #[error("File {0} not closed before opening {1}")]
     NotClosedBeforeOpening(String, String),
 
     #[error("{0} not Unicode")]
     NotUnicode(&'static str),
 
-    #[error("Forbidden characters found in database name {0}")]
-    ForbiddenCharactersInDB(String),
+    #[error("Invalid database name {0}. Characters must be alphanumeric or '.'")]
+    InvalidDBNameForbiddenCharacters(String),
+
+    #[error("Invalid database name {0}. Must not specify parent directory.")]
+    InvalidDBNameNoParentDirectory(String),
 
     #[error("{0} missing for {1}")]
     MissingParameter(&'static str, &'static str),
@@ -177,16 +186,19 @@ pub enum InputError {
     #[error("not unicode")]
     LineNotUnicode(#[from] std::str::Utf8Error),
 
-    /// Errors encountered while excuting a command
+    /// Errors encountered while executing a command
     #[error("processing: {0}")]
     Processing(#[from] ProcessingError),
 
     #[error("no final newline")]
     MissingNL,
+
+    #[error("Database file is still open: {0}")]
+    DBStillOpen(String),
 }
 
 /// Errors encountered while processing
-#[derive(Debug, Error)]
+#[derive(thiserror::Error, Debug)]
 pub enum ProcessingError {
     #[error("File {0} not closed before calling action MOVE")]
     NotClosedBeforeAction(String),
@@ -225,7 +237,7 @@ pub enum ProcessingError {
     IoError(#[from] std::io::Error),
 }
 
-#[derive(Error, Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum HeaderError {
     #[error("invalid magic")]
     BadMagic,
@@ -240,7 +252,7 @@ pub enum HeaderError {
     IoError(#[from] std::io::Error),
 }
 
-#[derive(Error, Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum SignatureError {
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
@@ -252,7 +264,7 @@ pub enum SignatureError {
     TooLarge,
 }
 
-#[derive(Error, Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum InvalidNumber {
     #[error("not unicode")]
     NotUnicode(#[from] std::str::Utf8Error),
@@ -283,6 +295,43 @@ impl<'a> DelOp<'a> {
             .ok_or(InputError::MissingParameter("DEL", "orig_line"))?;
 
         Ok(DelOp { line_no, del_line })
+    }
+}
+
+#[derive(Debug)]
+pub struct UnlinkOp<'a> {
+    db_name: &'a str,
+}
+
+/// Method to parse the cdiff line describing an unlink operation
+impl<'a> UnlinkOp<'a> {
+    pub fn new(data: &'a [u8]) -> Result<Self, InputError> {
+        let mut iter = data.split(|b| *b == b' ');
+        let db_name = str::from_utf8(
+            iter.next()
+                .ok_or(InputError::MissingParameter("UNLINK", "db_name"))?,
+        )
+        .map_err(|_| InputError::NotUnicode("database name"))?;
+
+        if !db_name
+            .chars()
+            .all(|x: char| x.is_alphanumeric() || x == '.')
+        {
+            // DB Name contains invalid characters.
+            return Err(InputError::InvalidDBNameForbiddenCharacters(
+                db_name.to_owned(),
+            ));
+        }
+
+        let db_path = PathBuf::from_str(db_name).unwrap();
+        if db_path.parent() != Some(Path::new("")) {
+            // DB Name must be not include a parent directory.
+            return Err(InputError::InvalidDBNameNoParentDirectory(
+                db_name.to_owned(),
+            ));
+        }
+
+        Ok(UnlinkOp { db_name })
     }
 }
 
@@ -412,7 +461,7 @@ pub extern "C" fn _script2cdiff(
 /// signature from the sha256 of the contents written.
 ///
 /// This function will panic if any of the &str parameters contain interior NUL bytes
-pub fn script2cdiff(script_file_name: &str, builder: &str, server: &str) -> Result<(), CdiffError> {
+pub fn script2cdiff(script_file_name: &str, builder: &str, server: &str) -> Result<(), Error> {
     // Make a copy of the script file name to use for the cdiff file
     let cdiff_file_name_string = script_file_name.to_string();
     let mut cdiff_file_name = cdiff_file_name_string.as_str();
@@ -426,18 +475,18 @@ pub fn script2cdiff(script_file_name: &str, builder: &str, server: &str) -> Resu
     // Get right-most hyphen index
     let hyphen_index = cdiff_file_name
         .rfind('-')
-        .ok_or(CdiffError::FilenameMissingHyphen)?;
+        .ok_or(Error::FilenameMissingHyphen)?;
 
     // Get the version, which should be to the right of the hyphen
     let version_string = cdiff_file_name
         .get((hyphen_index + 1)..)
-        .ok_or(CdiffError::FilenameMissingVersion)?;
+        .ok_or(Error::FilenameMissingVersion)?;
 
     // Parse the version into usize
     let version = version_string
         .to_string()
         .parse::<usize>()
-        .map_err(CdiffError::VersionParse)?;
+        .map_err(Error::VersionParse)?;
 
     // Add .cdiff suffix
     let cdiff_file_name = format!("{}.{}", cdiff_file_name, "cdiff");
@@ -445,21 +494,21 @@ pub fn script2cdiff(script_file_name: &str, builder: &str, server: &str) -> Resu
 
     // Open cdiff_file_name for writing
     let mut cdiff_file: File = File::create(&cdiff_file_name)
-        .map_err(|e| CdiffError::FileCreate(cdiff_file_name.to_owned(), e))?;
+        .map_err(|e| Error::FileCreate(cdiff_file_name.to_owned(), e))?;
 
     // Open the original script file for reading
-    let script_file: File = File::open(&script_file_name)
-        .map_err(|e| CdiffError::FileOpen(script_file_name.to_owned(), e))?;
+    let script_file: File = File::open(script_file_name)
+        .map_err(|e| Error::FileOpen(script_file_name.to_owned(), e))?;
 
     // Get file length
     let script_file_len = script_file
         .metadata()
-        .map_err(|e| CdiffError::FileMeta(script_file_name.to_owned(), e))?
+        .map_err(|e| Error::FileMeta(script_file_name.to_owned(), e))?
         .len();
 
     // Write header to cdiff file
     write!(cdiff_file, "ClamAV-Diff:{}:{}:", version, script_file_len)
-        .map_err(|e| CdiffError::FileWrite(script_file_name.to_owned(), e))?;
+        .map_err(|e| Error::FileWrite(script_file_name.to_owned(), e))?;
 
     // Set up buffered reader and gz writer
     let mut reader = BufReader::new(script_file);
@@ -471,22 +520,22 @@ pub fn script2cdiff(script_file_name: &str, builder: &str, server: &str) -> Resu
     // Get cdiff file writer back from flate2
     let mut cdiff_file = gz
         .finish()
-        .map_err(|e| CdiffError::FileWrite(cdiff_file_name.to_owned(), e))?;
+        .map_err(|e| Error::FileWrite(cdiff_file_name.to_owned(), e))?;
 
     // Get the new cdiff file len
     let cdiff_file_len = cdiff_file
         .metadata()
-        .map_err(|e| CdiffError::FileMeta(cdiff_file_name.to_owned(), e))?
+        .map_err(|e| Error::FileMeta(cdiff_file_name.to_owned(), e))?
         .len();
     debug!(
         "script2cdiff() - wrote {} bytes to {}",
         cdiff_file_len, cdiff_file_name
     );
 
-    // Calculate SHA2-256 to get the sigature
+    // Calculate SHA2-256 to get the signature
     // TODO: Do this while the file is being written
     let bytes = std::fs::read(&cdiff_file_name)
-        .map_err(|e| CdiffError::FileRead(cdiff_file_name.to_owned(), e))?;
+        .map_err(|e| Error::FileRead(cdiff_file_name.to_owned(), e))?;
     let sha256 = {
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
@@ -511,12 +560,12 @@ pub fn script2cdiff(script_file_name: &str, builder: &str, server: &str) -> Resu
     // Write cdiff footer delimiter
     cdiff_file
         .write_all(b":")
-        .map_err(|e| CdiffError::FileWrite(cdiff_file_name.to_owned(), e))?;
+        .map_err(|e| Error::FileWrite(cdiff_file_name.to_owned(), e))?;
 
     // Write dsig to cdiff footer
     cdiff_file
         .write_all(dsig.to_bytes())
-        .map_err(|e| CdiffError::FileWrite(cdiff_file_name, e))?;
+        .map_err(|e| Error::FileWrite(cdiff_file_name, e))?;
 
     // Exit success
     Ok(())
@@ -559,7 +608,7 @@ pub extern "C" fn _cdiff_apply(fd: i32, mode: u16) -> i32 {
 /// A cdiff file contains a footer that is the signed signature of the sha256
 /// file contains of the header and the body. The footer begins after the first
 /// ':' character to the left of EOF.
-pub fn cdiff_apply(file: &mut File, mode: ApplyMode) -> Result<(), CdiffError> {
+pub fn cdiff_apply(file: &mut File, mode: ApplyMode) -> Result<(), Error> {
     let path = std::env::current_dir().unwrap();
     debug!("cdiff_apply() - current directory is {}", path.display());
 
@@ -570,7 +619,7 @@ pub fn cdiff_apply(file: &mut File, mode: ApplyMode) -> Result<(), CdiffError> {
             let dsig = read_dsig(file)?;
             debug!("cdiff_apply() - final dsig length is {}", dsig.len());
             if is_debug_enabled() {
-                print_file_data(dsig.clone(), dsig.len() as usize);
+                print_file_data(dsig.clone(), dsig.len());
             }
 
             // Get file length
@@ -599,7 +648,7 @@ pub fn cdiff_apply(file: &mut File, mode: ApplyMode) -> Result<(), CdiffError> {
             };
             debug!("cdiff_apply() - cli_versig2() result = {}", versig_result);
             if versig_result != 0 {
-                return Err(CdiffError::InvalidDigitalSignature);
+                return Err(Error::InvalidDigitalSignature);
             }
 
             // Read file length from header
@@ -644,10 +693,22 @@ fn cmd_open(ctx: &mut Context, db_name: Option<&[u8]>) -> Result<(), InputError>
 
     if !db_name
         .chars()
-        .all(|x: char| x.is_alphanumeric() || x == '\\' || x == '/' || x == '.')
+        .all(|x: char| x.is_alphanumeric() || x == '.')
     {
-        return Err(InputError::ForbiddenCharactersInDB(db_name.to_owned()));
+        // DB Name contains invalid characters.
+        return Err(InputError::InvalidDBNameForbiddenCharacters(
+            db_name.to_owned(),
+        ));
     }
+
+    let db_path = PathBuf::from_str(db_name).unwrap();
+    if db_path.parent() != Some(Path::new("")) {
+        // DB Name must be not include a parent directory.
+        return Err(InputError::InvalidDBNameNoParentDirectory(
+            db_name.to_owned(),
+        ));
+    }
+
     ctx.open_db = Some(db_name.to_owned());
 
     Ok(())
@@ -912,6 +973,7 @@ fn cmd_close(ctx: &mut Context) -> Result<(), InputError> {
     // Test for lines to add
     if !ctx.additions.is_empty() {
         let mut db_file = OpenOptions::new()
+            .create(true)
             .append(true)
             .open(&open_db)
             .map_err(ProcessingError::from)?;
@@ -927,12 +989,16 @@ fn cmd_close(ctx: &mut Context) -> Result<(), InputError> {
 }
 
 /// Set up Context structure with data parsed from command unlink
-fn cmd_unlink(ctx: &mut Context) -> Result<(), InputError> {
+fn cmd_unlink(ctx: &mut Context, unlink_op: UnlinkOp) -> Result<(), InputError> {
     if let Some(open_db) = &ctx.open_db {
-        fs::remove_file(open_db).map_err(ProcessingError::from)?;
-    } else {
-        return Err(InputError::NoDBForAction("UNLINK"));
+        return Err(InputError::DBStillOpen(open_db.clone()));
     }
+
+    // We checked that the db_name doesn't have any '/' or '\\' in it before
+    // adding to the UnlinkOp struct, so it's safe to say the path is just a local file and
+    // won't accidentally delete something in a different directory.
+    fs::remove_file(unlink_op.db_name).map_err(ProcessingError::from)?;
+
     Ok(())
 }
 
@@ -960,9 +1026,12 @@ fn process_line(ctx: &mut Context, line: &[u8]) -> Result<(), InputError> {
             cmd_move(ctx, move_op)
         }
         b"CLOSE" => cmd_close(ctx),
-        b"UNLINK" => cmd_unlink(ctx),
+        b"UNLINK" => {
+            let unlink_op = UnlinkOp::new(remainder.unwrap())?;
+            cmd_unlink(ctx, unlink_op)
+        }
         _ => Err(InputError::UnknownCommand(
-            String::from_utf8(cmd.to_owned()).unwrap(),
+            String::from_utf8_lossy(cmd).to_string(),
         )),
     }
 }
@@ -972,7 +1041,7 @@ fn process_lines<T>(
     ctx: &mut Context,
     reader: &mut T,
     uncompressed_size: usize,
-) -> Result<(), CdiffError>
+) -> Result<(), Error>
 where
     T: BufRead,
 {
@@ -986,10 +1055,14 @@ where
             0 => break,
             n_read => {
                 decompressed_bytes = decompressed_bytes + n_read + 1;
-                match linebuf.get(0) {
+                match linebuf.first() {
                     // Skip comment lines
                     Some(b'#') => continue,
-                    _ => process_line(ctx, &linebuf).map_err(|e| CdiffError::Input(line_no, e))?,
+                    _ => process_line(ctx, &linebuf).map_err(|e| Error::Input {
+                        line: line_no,
+                        err: e,
+                        operation: String::from_utf8_lossy(&linebuf).to_string(),
+                    })?,
                 }
             }
         }
@@ -1035,7 +1108,7 @@ fn read_dsig(file: &mut File) -> Result<Vec<u8>, SignatureError> {
 // as the offset in the file that the header ends.
 fn read_size(file: &mut File) -> Result<(u32, usize), HeaderError> {
     // Seek to beginning of file.
-    file.seek(SeekFrom::Start(0))?;
+    file.rewind()?;
 
     // File should always start with "ClamAV-Diff".
     let prefix = b"ClamAV-Diff";
@@ -1076,11 +1149,11 @@ fn read_size(file: &mut File) -> Result<(u32, usize), HeaderError> {
 }
 
 /// Calculate the sha256 of the first len bytes of a file
-fn get_hash(file: &mut File, len: usize) -> Result<[u8; 32], CdiffError> {
+fn get_hash(file: &mut File, len: usize) -> Result<[u8; 32], Error> {
     let mut hasher = Sha256::new();
 
     // Seek to beginning of file
-    file.seek(SeekFrom::Start(0))?;
+    file.rewind()?;
 
     let mut sum: usize = 0;
 
@@ -1119,7 +1192,7 @@ mod tests {
     use std::path::Path;
 
     /// CdiffTestError enumerates all possible errors returned by this testing library.
-    #[derive(Error, Debug)]
+    #[derive(thiserror::Error, Debug)]
     pub enum CdiffTestError {
         /// Represents all other cases of `std::io::Error`.
         #[error(transparent)]
@@ -1471,7 +1544,7 @@ mod tests {
     fn script2cdiff_missing_hyphen() {
         assert!(matches!(
             script2cdiff("", "", ""),
-            Err(CdiffError::FilenameMissingHyphen)
+            Err(Error::FilenameMissingHyphen)
         ));
     }
 }

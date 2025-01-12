@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2010-2013 Sourcefire, Inc.
  *
  *  Authors: aCaB
@@ -116,12 +116,12 @@ int hm_addhash_bin(struct cli_matcher *root, const void *binhash, cli_hash_type_
     if (!szh->hash_array) {
         cli_errmsg("hm_addhash_bin: failed to grow hash array to %u entries\n", szh->items);
         szh->items = 0;
-        MPOOL_FREE(root->mempool, szh->virusnames);
+        MPOOL_FREE(root->mempool, (void *)szh->virusnames);
         szh->virusnames = NULL;
         return CL_EMEM;
     }
 
-    szh->virusnames = MPOOL_REALLOC2(root->mempool, szh->virusnames, sizeof(*szh->virusnames) * szh->items);
+    szh->virusnames = MPOOL_REALLOC2(root->mempool, (void *)szh->virusnames, sizeof(*szh->virusnames) * szh->items);
     if (!szh->virusnames) {
         cli_errmsg("hm_addhash_bin: failed to grow virusname array to %u entries\n", szh->items);
         szh->items = 0;
@@ -319,7 +319,7 @@ void hm_free(struct cli_matcher *root)
             MPOOL_FREE(root->mempool, szh->hash_array);
             while (szh->items)
                 MPOOL_FREE(root->mempool, (void *)szh->virusnames[--szh->items]);
-            MPOOL_FREE(root->mempool, szh->virusnames);
+            MPOOL_FREE(root->mempool, (void *)szh->virusnames);
             MPOOL_FREE(root->mempool, szh);
         }
         CLI_HTU32_FREE(ht, root->mempool);
@@ -334,6 +334,6 @@ void hm_free(struct cli_matcher *root)
         MPOOL_FREE(root->mempool, szh->hash_array);
         while (szh->items)
             MPOOL_FREE(root->mempool, (void *)szh->virusnames[--szh->items]);
-        MPOOL_FREE(root->mempool, szh->virusnames);
+        MPOOL_FREE(root->mempool, (void *)szh->virusnames);
     }
 }

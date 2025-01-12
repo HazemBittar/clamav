@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2007-2013 Sourcefire, Inc.
  *
  *  Authors: Alberto Wu
@@ -39,9 +39,8 @@
 
 #include <zlib.h>
 #include "inflate64.h"
-#if HAVE_BZLIB_H
+
 #include <bzlib.h>
-#endif
 
 #include "explode.h"
 #include "others.h"
@@ -226,7 +225,7 @@ static cl_error_t unz(
                         break;
                     }
                     if (cli_writen(out_file, obuf, sizeof(obuf) - (*avail_out)) != (size_t)(sizeof(obuf) - (*avail_out))) {
-                        cli_warnmsg("cli_unzip: falied to write %lu inflated bytes\n", (unsigned long int)sizeof(obuf) - (*avail_out));
+                        cli_warnmsg("cli_unzip: failed to write %lu inflated bytes\n", (unsigned long int)sizeof(obuf) - (*avail_out));
                         ret = CL_EWRITE;
                         res = 100;
                         break;
@@ -242,7 +241,6 @@ static cl_error_t unz(
             break;
         }
 
-#if HAVE_BZLIB_H
 #ifdef NOBZ2PREFIX
 #define BZ2_bzDecompress bzDecompress
 #define BZ2_bzDecompressEnd bzDecompressEnd
@@ -269,7 +267,7 @@ static cl_error_t unz(
                         break;
                     }
                     if (cli_writen(out_file, obuf, sizeof(obuf) - strm.avail_out) != (size_t)(sizeof(obuf) - strm.avail_out)) {
-                        cli_warnmsg("cli_unzip: falied to write %lu bunzipped bytes\n", (long unsigned int)sizeof(obuf) - strm.avail_out);
+                        cli_warnmsg("cli_unzip: failed to write %lu bunzipped bytes\n", (long unsigned int)sizeof(obuf) - strm.avail_out);
                         ret = CL_EWRITE;
                         res = 100;
                         break;
@@ -284,7 +282,6 @@ static cl_error_t unz(
             if (res == BZ_STREAM_END) res = 0;
             break;
         }
-#endif /* HAVE_BZLIB_H */
 
         case ALG_IMPLODE: {
             struct xplstate strm;
@@ -305,7 +302,7 @@ static cl_error_t unz(
                         break;
                     }
                     if (cli_writen(out_file, obuf, sizeof(obuf) - strm.avail_out) != (size_t)(sizeof(obuf) - strm.avail_out)) {
-                        cli_warnmsg("cli_unzip: falied to write %lu exploded bytes\n", (unsigned long int)sizeof(obuf) - strm.avail_out);
+                        cli_warnmsg("cli_unzip: failed to write %lu exploded bytes\n", (unsigned long int)sizeof(obuf) - strm.avail_out);
                         ret = CL_EWRITE;
                         res = 100;
                         break;
@@ -322,9 +319,6 @@ static cl_error_t unz(
         case ALG_LZMA:
             /* easy but there's not a single sample in the zoo */
 
-#if !HAVE_BZLIB_H
-        case ALG_BZIP2:
-#endif
         case ALG_SHRUNK:
         case ALG_REDUCE1:
         case ALG_REDUCE2:
@@ -624,6 +618,9 @@ static unsigned int parse_local_file_header(
     uint32_t csize, usize;
     unsigned int size_of_fileheader_and_data = 0;
 
+    uint32_t nsize  = 0;
+    const char *src = NULL;
+
     if (!(local_header = fmap_need_off(map, loff, SIZEOF_LOCAL_HEADER))) {
         cli_dbgmsg("cli_unzip: local header - out of file\n");
         goto done;
@@ -647,18 +644,19 @@ static unsigned int parse_local_file_header(
         fmap_unneed_off(map, loff, SIZEOF_LOCAL_HEADER);
         goto done;
     }
-    if (ctx->engine->cdb || cli_debug_flag || ctx->engine->keeptmp || ctx->options->general & CL_SCAN_GENERAL_COLLECT_METADATA) {
-        uint32_t nsize = (LOCAL_HEADER_flen >= sizeof(name)) ? sizeof(name) - 1 : LOCAL_HEADER_flen;
-        const char *src;
-        if (nsize && (src = fmap_need_ptr_once(map, zip, nsize))) {
-            memcpy(name, zip, nsize);
-            name[nsize] = '\0';
-            if (CL_SUCCESS != cli_basename(name, nsize, &original_filename)) {
-                original_filename = NULL;
-            }
-        } else
-            name[0] = '\0';
+
+    nsize = (LOCAL_HEADER_flen >= sizeof(name)) ? sizeof(name) - 1 : LOCAL_HEADER_flen;
+    src   = fmap_need_ptr_once(map, zip, nsize);
+    if (nsize && (NULL != src)) {
+        memcpy(name, zip, nsize);
+        name[nsize] = '\0';
+        if (CL_SUCCESS != cli_basename(name, nsize, &original_filename)) {
+            original_filename = NULL;
+        }
+    } else {
+        name[0] = '\0';
     }
+
     zip += LOCAL_HEADER_flen;
     zsize -= LOCAL_HEADER_flen;
 
@@ -667,7 +665,7 @@ static unsigned int parse_local_file_header(
     /* ZMDfmt virname:encrypted(0-1):filename(exact|*):usize(exact|*):csize(exact|*):crc32(exact|*):method(exact|*):fileno(exact|*):maxdepth(exact|*) */
 
     /* Scan file header metadata. */
-    if (cli_matchmeta(ctx, name, LOCAL_HEADER_csize, LOCAL_HEADER_usize, (LOCAL_HEADER_flags & F_ENCR) != 0, file_count, LOCAL_HEADER_crc32, NULL) == CL_VIRUS) {
+    if (cli_matchmeta(ctx, name, LOCAL_HEADER_csize, LOCAL_HEADER_usize, (LOCAL_HEADER_flags & F_ENCR) != 0, file_count, LOCAL_HEADER_crc32) == CL_VIRUS) {
         *ret = CL_VIRUS;
         goto done;
     }
@@ -857,7 +855,7 @@ parse_central_directory_file_header(
     coff += CENTRAL_HEADER_flen;
 
     /* requests do not supply a ctx; also prevent multiple scans */
-    if (ctx && (CL_VIRUS == cli_matchmeta(ctx, name, CENTRAL_HEADER_csize, CENTRAL_HEADER_usize, (CENTRAL_HEADER_flags & F_ENCR) != 0, file_count, CENTRAL_HEADER_crc32, NULL))) {
+    if (ctx && (CL_VIRUS == cli_matchmeta(ctx, name, CENTRAL_HEADER_csize, CENTRAL_HEADER_usize, (CENTRAL_HEADER_flags & F_ENCR) != 0, file_count, CENTRAL_HEADER_crc32))) {
         last = 1;
         *ret = CL_VIRUS;
         goto done;
@@ -994,7 +992,7 @@ cl_error_t index_the_central_directory(
     *catalogue   = NULL;
     *num_records = 0;
 
-    zip_catalogue = (struct zip_record *)cli_malloc(sizeof(struct zip_record) * ZIP_RECORDS_CHECK_BLOCKSIZE);
+    zip_catalogue = (struct zip_record *)malloc(sizeof(struct zip_record) * ZIP_RECORDS_CHECK_BLOCKSIZE);
     if (NULL == zip_catalogue) {
         status = CL_EMEM;
         goto done;
@@ -1008,7 +1006,7 @@ cl_error_t index_the_central_directory(
         coff = parse_central_directory_file_header(map,
                                                    coff,
                                                    fsize,
-                                                   NULL, // num_files_unziped not required
+                                                   NULL, // num_files_unzipped not required
                                                    index + 1,
                                                    &ret,
                                                    ctx,
@@ -1061,7 +1059,7 @@ cl_error_t index_the_central_directory(
                 goto done;
             }
 
-            zip_catalogue_new = cli_realloc2(zip_catalogue, sizeof(struct zip_record) * ZIP_RECORDS_CHECK_BLOCKSIZE * (num_record_blocks + 1));
+            zip_catalogue_new = cli_max_realloc(zip_catalogue, sizeof(struct zip_record) * ZIP_RECORDS_CHECK_BLOCKSIZE * (num_record_blocks + 1));
             if (NULL == zip_catalogue_new) {
                 status = CL_EMEM;
                 goto done;
@@ -1177,9 +1175,7 @@ cl_error_t cli_unzip(cli_ctx *ctx)
     fmap_t *map = ctx->fmap;
     char *tmpd  = NULL;
     const char *ptr;
-#if HAVE_JSON
-    int toval = 0;
-#endif
+    int toval                        = 0;
     struct zip_record *zip_catalogue = NULL;
     size_t records_count             = 0;
     size_t i;
@@ -1290,11 +1286,10 @@ cl_error_t cli_unzip(cli_ctx *ctx)
                 goto done;
             }
 
-#if HAVE_JSON
             if (cli_json_timeout_cycle_check(ctx, &toval) != CL_SUCCESS) {
                 ret = CL_ETIMEOUT;
             }
-#endif
+
             if (ret != CL_SUCCESS) {
                 break;
             }
@@ -1339,11 +1334,10 @@ cl_error_t cli_unzip(cli_ctx *ctx)
                 cli_append_potentially_unwanted_if_heur_exceedsmax(ctx, "Heuristics.Limits.Exceeded.MaxFiles");
                 ret = CL_EMAXFILES;
             }
-#if HAVE_JSON
+
             if (cli_json_timeout_cycle_check(ctx, &toval) != CL_SUCCESS) {
                 ret = CL_ETIMEOUT;
             }
-#endif
         }
     }
 
@@ -1440,9 +1434,8 @@ cl_error_t unzip_search(cli_ctx *ctx, fmap_t *map, struct zip_requests *requests
     uint32_t coff = 0;
     const char *ptr;
     cl_error_t ret = CL_CLEAN;
-#if HAVE_JSON
     uint32_t toval = 0;
-#endif
+
     cli_dbgmsg("in unzip_search\n");
 
     if ((!ctx && !map) || !requests) {
@@ -1497,11 +1490,10 @@ cl_error_t unzip_search(cli_ctx *ctx, fmap_t *map, struct zip_requests *requests
                 cli_append_potentially_unwanted_if_heur_exceedsmax(ctx, "Heuristics.Limits.Exceeded.MaxFiles");
                 ret = CL_EMAXFILES;
             }
-#if HAVE_JSON
+
             if (ctx && cli_json_timeout_cycle_check(ctx, (int *)(&toval)) != CL_SUCCESS) {
                 ret = CL_ETIMEOUT;
             }
-#endif
         }
     } else {
         cli_dbgmsg("unzip_search: cannot locate central directory\n");

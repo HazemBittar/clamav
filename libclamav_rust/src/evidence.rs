@@ -1,7 +1,7 @@
 /*
  *  Functions and structures for recording, reporting evidence towards a scan verdict.
  *
- *  Copyright (C) 2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2022-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *
  *  Authors: Micah Snyder
  *
@@ -23,20 +23,19 @@
 use std::{collections::HashMap, ffi::CStr, mem::ManuallyDrop, os::raw::c_char};
 
 use log::{debug, error, warn};
-use thiserror::Error;
 
 use crate::{ffi_util::FFIError, rrf_call, sys, validate_str_param};
 
-/// CdiffError enumerates all possible errors returned by this library.
-#[derive(Error, Debug)]
-pub enum EvidenceError {
+/// Error enumerates all possible errors returned by this library.
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
     #[error("Invalid format")]
     Format,
 
     #[error("Invalid parameter: {0}")]
     InvalidParameter(String),
 
-    #[error("{0} parmeter is NULL")]
+    #[error("{0} parameter is NULL")]
     NullParam(&'static str),
 }
 
@@ -70,7 +69,7 @@ pub struct IndicatorMeta {
 /// Initialize a match vector
 #[no_mangle]
 pub extern "C" fn evidence_new() -> sys::evidence_t {
-    Box::into_raw(Box::new(Evidence::default())) as sys::evidence_t
+    Box::into_raw(Box::<Evidence>::default()) as sys::evidence_t
 }
 
 /// Free the evidence
@@ -147,7 +146,7 @@ pub unsafe extern "C" fn _evidence_get_indicator(
                 return meta.last().unwrap().static_virname as *const c_char;
             } else {
                 // no alert at that index. return NULL
-                return std::ptr::null();
+                std::ptr::null()
             }
         }
         IndicatorType::PotentiallyUnwanted => {
@@ -155,7 +154,7 @@ pub unsafe extern "C" fn _evidence_get_indicator(
                 return meta.last().unwrap().static_virname as *const c_char;
             } else {
                 // no alert at that index. return NULL
-                return std::ptr::null();
+                std::ptr::null()
             }
         }
     }
@@ -210,7 +209,7 @@ pub unsafe extern "C" fn _evidence_add_indicator(
     indicator_type: IndicatorType,
     err: *mut *mut FFIError,
 ) -> bool {
-    let name_str = validate_str_param!(name);
+    let name_str = validate_str_param!(name, err = err);
 
     let mut evidence = ManuallyDrop::new(Box::from_raw(evidence as *mut Evidence));
 
@@ -240,22 +239,16 @@ impl Evidence {
         name: &str,
         static_virname: *const c_char,
         indicator_type: IndicatorType,
-    ) -> Result<(), EvidenceError> {
+    ) -> Result<(), Error> {
         let meta: IndicatorMeta = IndicatorMeta { static_virname };
 
         match indicator_type {
             IndicatorType::Strong => {
-                self.strong
-                    .entry(name.to_string())
-                    .or_insert_with(Vec::new)
-                    .push(meta);
+                self.strong.entry(name.to_string()).or_default().push(meta);
             }
 
             IndicatorType::PotentiallyUnwanted => {
-                self.pua
-                    .entry(name.to_string())
-                    .or_insert_with(Vec::new)
-                    .push(meta);
+                self.pua.entry(name.to_string()).or_default().push(meta);
             }
 
             #[cfg(feature = "not_ready")]
@@ -263,10 +256,7 @@ impl Evidence {
             // match the archive/extraction level at which each was found.
             // This will be required for alerting signatures to depend on weak-indicators for embedded content.
             IndicatorType::Weak => {
-                self.weak
-                    .entry(name.to_string())
-                    .or_insert_with(Vec::new)
-                    .push(meta);
+                self.weak.entry(name.to_string()).or_default().push(meta);
             }
         }
 

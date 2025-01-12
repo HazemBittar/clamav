@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2007-2013 Sourcefire, Inc.
  *
  *  Authors: Tomasz Kojm
@@ -106,6 +106,9 @@ static struct dconf_module modules[] = {
     {"ARCHIVE", "GPT", ARCH_CONF_GPT, 1},
     {"ARCHIVE", "APM", ARCH_CONF_APM, 1},
     {"ARCHIVE", "EGG", ARCH_CONF_EGG, 1},
+    {"ARCHIVE", "UDF", ARCH_CONF_UDF, 1},
+    {"ARCHIVE", "LHA", ARCH_CONF_LHA_LZH, 1},
+    {"ARCHIVE", "ALZ", ARCH_CONF_ALZ, 1},
 
     {"DOCUMENT", "HTML", DOC_CONF_HTML, 1},
     {"DOCUMENT", "RTF", DOC_CONF_RTF, 1},
@@ -117,6 +120,7 @@ static struct dconf_module modules[] = {
     {"DOCUMENT", "OOXML", DOC_CONF_OOXML, 1},
     {"DOCUMENT", "MSPML", DOC_CONF_MSXML, 1},
     {"DOCUMENT", "HWP", DOC_CONF_HWP, 1},
+    {"DOCUMENT", "ONENOTE", DOC_CONF_ONENOTE, 1},
 
     {"MAIL", "MBOX", MAIL_CONF_MBOX, 1},
     {"MAIL", "TNEF", MAIL_CONF_TNEF, 1},
@@ -135,6 +139,7 @@ static struct dconf_module modules[] = {
     {"OTHER", "GIF", OTHER_CONF_GIF, 1},
     {"OTHER", "PNG", OTHER_CONF_PNG, 1},
     {"OTHER", "TIFF", OTHER_CONF_TIFF, 1},
+    {"OTHER", "IMAGE FUZZY HASH", OTHER_CONF_IMAGE_FUZZY_HASH, 1},
 
     {"PHISHING", "ENGINE", PHISHING_CONF_ENGINE, 1},
     {"PHISHING", "ENTCONV", PHISHING_CONF_ENTCONV, 1},
@@ -306,7 +311,6 @@ void cli_dconf_print(struct cli_dconf *dconf)
             else
                 continue;
         } else if (!strcmp(modules[i].mname, "PCRE")) {
-#if HAVE_PCRE
             if (!pcre) {
                 cli_dbgmsg("Module PCRE %s\n", dconf->pcre ? "On" : "Off");
                 pcre = 1;
@@ -316,14 +320,6 @@ void cli_dconf_print(struct cli_dconf *dconf)
                 cli_dbgmsg("   * Submodule %10s:\t%s\n", modules[i].sname, (dconf->pcre & modules[i].bflag) ? "On" : "** Off **");
             else
                 continue;
-#else
-            if (!pcre) {
-                cli_dbgmsg("Module PCRE Off\n");
-                pcre = 1;
-            }
-
-            continue;
-#endif
         }
     }
 }

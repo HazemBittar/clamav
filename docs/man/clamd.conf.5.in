@@ -83,7 +83,7 @@ Log additional information about the infected file, such as its size and hash, t
 Default: no
 .TP
 \fBPidFile STRING\fR
-Save the process identifier of a listening daemon (main thread) to a specified file.
+Write the daemon's pid to the specified file.
 .br
 Default: disabled
 .TP
@@ -101,6 +101,11 @@ Default: defined at configuration (/usr/local/share/clamav)
 Only load the official signatures published by the ClamAV project.
 .br
 Default: no
+.TP
+\fBFailIfCvdOlderThan NUMBER\fR
+Return with a nonzero error code if the virus database is older than the specified number of days.
+.br
+Default: -1
 .TP
 \fBLocalSocket STRING\fR
 Path to a local (Unix) socket the daemon will listen on.
@@ -240,10 +245,16 @@ Enable non-blocking (multi-threaded/concurrent) database reloads. This feature w
 Default: yes
 .TP
 \fBVirusEvent COMMAND\fR
-Execute a command when a virus is found. In the command string %v will be
-replaced with the virus name and %f will be replaced with the file name.
-Additionally, two environment variables will be defined: $CLAM_VIRUSEVENT_FILENAME
-and $CLAM_VIRUSEVENT_VIRUSNAME.
+Execute a command when virus is found.
+Use the following environment variables to identify the file and virus names:
+- $CLAM_VIRUSEVENT_FILENAME
+- $CLAM_VIRUSEVENT_VIRUSNAME
+In the command string, '%v' will also be replaced with the virus name.
+Note: The '%f' filename format character has been disabled and will no longer
+be replaced with the file name, due to command injection security concerns.
+Use the 'CLAM_VIRUSEVENT_FILENAME' environment variable instead.
+For the same reason, you should NOT use the environment variables in the
+command directly, but should use it carefully from your executed script.
 \fR
 .br
 Default: disabled
@@ -474,10 +485,31 @@ If you turn off this option, the original files will still be scanned, but witho
 .br
 Default: yes
 .TP
+\fBScanOneNote BOOL\fR
+This option enables scanning OneNote files.
+.br
+If you turn off this option, the original files will still be scanned, but without additional processing.
+.br
+Default: yes
+.TP
 \fBScanArchive BOOL\fR
 Scan within archives and compressed files.
 .br
 If you turn off this option, the original files will still be scanned, but without unpacking and additional processing.
+.br
+Default: yes
+.TP
+\fBScanImage BOOL\fR
+This option enables scanning of image (graphics).
+.br
+If you turn off this option, the original files will still be scanned, but without unpacking and additional processing.
+.br
+Default: yes
+.TP
+\fBScanImageFuzzyHash BOOL\fR
+This option enables detection by calculating a fuzzy hash of image (graphics) files. Signatures using image fuzzy hashes typically match files and documents by identifying images embedded or attached to those files.
+.br
+If you turn off this option, then some files may no longer be detected.
 .br
 Default: yes
 .TP
@@ -530,6 +562,18 @@ Default: no
 Alert on raw DMG image files containing partition intersections.
 .br
 Default: no
+.TP
+\fBDisableCache\fR
+This option allows you to disable the caching feature of the engine.
+.br
+By default, the engine will store an MD5 in a cache of any files that are not flagged as virus or that hit limits checks. \fBWarning: Disabling the cache will have a negative performance impact on large scans.\fR
+.br
+Default: no
+.TP
+\fBCacheSize\fR
+This option allows you to set the number of entries the cache can store. The value should be a square number or will be rounded up to the nearest square number.
+.br
+Default: 65536
 .TP
 \fBForceToDisk\fR
 This option causes memory or nested map scans to dump the content to disk.
@@ -728,7 +772,7 @@ Max number of scanning threads to allocate to the OnAccess thread pool at startu
 Default: 5
 .TP
 \fBOnAccessCurlTimeout NUMBER\fR
-Max amount of time (in milliseconds) that the OnAccess client should spend for every connect, send, and recieve attempt when communicating with clamd via curl.
+Max amount of time (in milliseconds) that the OnAccess client should spend for every connect, send, and receive attempt when communicating with clamd via curl.
 .br
 Default: 5000 (5 seconds)
 .TP

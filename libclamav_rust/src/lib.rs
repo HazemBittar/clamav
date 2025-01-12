@@ -1,7 +1,7 @@
 /*
  *  libclamav features written in Rust
  *
- *  Copyright (C) 2021-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2021-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *
  *  Authors: Micah Snyder, Mickey Sola
  *
@@ -23,9 +23,15 @@
 /// cbindgen:ignore
 pub mod sys;
 
+pub mod alz;
 pub mod cdiff;
+pub mod css_image_extract;
+pub mod ctx;
 pub mod evidence;
 pub mod ffi_util;
+pub mod fmap;
 pub mod fuzzy_hash;
 pub mod logging;
+pub mod onenote;
+pub mod scanners;
 pub mod util;

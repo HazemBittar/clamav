@@ -1,7 +1,6 @@
-# Copyright (C) 2019-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+# Copyright (C) 2019-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
 
 add_compile_definitions(RARDLL)
-add_compile_definitions(WARN_DLOPEN_FAIL)
 add_compile_definitions(_FILE_OFFSET_BITS=64)
 
 if(WIN32)
@@ -68,9 +67,12 @@ endif()
 if(ENABLE_SHARED_LIB)
     # The unrar shared library.
     add_library( clamunrar SHARED )
-    set_target_properties(clamunrar PROPERTIES
+    set_target_properties( clamunrar PROPERTIES
         VERSION ${LIBCLAMAV_VERSION}
-        SOVERSION ${LIBCLAMAV_SOVERSION})
+        SOVERSION ${LIBCLAMAV_SOVERSION}
+        CXX_STANDARD 11
+    )
+
     target_sources( clamunrar
         PRIVATE
             ${UNRAR_SOURCES}
@@ -95,6 +97,8 @@ if(ENABLE_SHARED_LIB)
 
     if(WIN32)
         set_target_properties(clamunrar PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    elseif(UNIX AND NOT APPLE AND NOT AIX)
+        target_link_options(clamunrar PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/libclamunrar.map")
     endif()
 
     if(WIN32)
@@ -110,6 +114,9 @@ endif()
 if(ENABLE_STATIC_LIB)
     # The clamunrar static library.
     add_library( clamunrar_static STATIC)
+    set_target_properties( clamunrar_static PROPERTIES
+        CXX_STANDARD 11
+    )
     target_sources( clamunrar_static
         PRIVATE
             ${UNRAR_SOURCES}
@@ -123,6 +130,12 @@ if(ENABLE_STATIC_LIB)
     if(NOT WIN32)
         set_target_properties( clamunrar_static PROPERTIES
             COMPILE_FLAGS "-Wno-logical-op-parentheses -Wno-switch -Wno-dangling-else")
+    endif()
+
+    if(WIN32)
+        install(TARGETS clamunrar_static DESTINATION . COMPONENT libraries)
+    else()
+        install(TARGETS clamunrar_static DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT libraries)
     endif()
 
     add_library( ClamAV::libunrar_static ALIAS clamunrar_static )

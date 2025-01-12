@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2013-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2013-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *  Copyright (C) 2007-2013 Sourcefire, Inc.
  *
  *  Authors: Michal 'GiM' Spadlinski
@@ -340,7 +340,7 @@ int mew_lzma(char *orgsource, const char *buf, uint32_t size_sum, uint32_t vma, 
     uint32_t new_eax, new_edx, temp;
     int i, mainloop;
 
-    char var1, var30;
+    char var1;
     const char *source = buf;
     char *dest, *new_ebx;
     const char *new_ecx, *var0C_ecxcopy;
@@ -621,7 +621,6 @@ int mew_lzma(char *orgsource, const char *buf, uint32_t size_sum, uint32_t vma, 
                     t       = *(var18 + new_eax);
                     new_eax = (new_eax & 0xffffff00) | t;
 
-                    var30 = t;
                     if (lzma_48635C(t, &new_ecx, &var40, &new_eax, orgsource, size_sum) == 0xffffffff)
                         return -1;
                     var20 = 0;
@@ -846,7 +845,7 @@ int unmew11(char *src, uint32_t off, uint32_t ssize, uint32_t dsize, uint32_t ba
                 return -1;
             }
 
-            if (!(newsect = cli_realloc(section, (i + 2) * sizeof(struct cli_exe_section)))) {
+            if (!(newsect = cli_max_realloc(section, (i + 2) * sizeof(struct cli_exe_section)))) {
                 cli_dbgmsg("MEW: Out of memory\n");
                 free(section);
                 return -1;
@@ -899,7 +898,7 @@ int unmew11(char *src, uint32_t off, uint32_t ssize, uint32_t dsize, uint32_t ba
         }
         loc_ds = PESALIGN(loc_ds, 0x1000);
 
-        section = cli_calloc(1, sizeof(struct cli_exe_section));
+        section = calloc(1, sizeof(struct cli_exe_section));
         if (!section) {
             cli_dbgmsg("MEW: Out of memory\n");
             return -1;

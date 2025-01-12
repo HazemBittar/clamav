@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2014-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2014-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *
  *  Authors: Steven Morgan <smorgan@sourcefire.com>
  *
@@ -34,7 +34,6 @@
 #include "others.h"
 #include "openioc.h"
 
-#ifdef HAVE_LIBXML2
 #include <libxml/xmlreader.h>
 
 struct openioc_hash {
@@ -100,7 +99,7 @@ static int openioc_parse_content(xmlTextReaderPtr reader, struct openioc_hash **
     if (xmlTextReaderRead(reader) == 1 && xmlTextReaderNodeType(reader) == XML_READER_TYPE_TEXT) {
         xmlval = xmlTextReaderConstValue(reader);
         if (xmlval) {
-            elem = cli_calloc(1, sizeof(struct openioc_hash));
+            elem = calloc(1, sizeof(struct openioc_hash));
             if (NULL == elem) {
                 cli_dbgmsg("openioc_parse: calloc fails for openioc_hash.\n");
                 return CL_EMEM;
@@ -334,10 +333,3 @@ int openioc_parse(const char *fname, int fd, struct cl_engine *engine, unsigned 
 
     return CL_SUCCESS;
 }
-#else
-int openioc_parse(const char *fname, int fd, struct cl_engine *engine, unsigned int options)
-{
-    cli_dbgmsg("openioc_parse: libxml2 support is compiled out and is needed for OpenIOC support.\n");
-    return CL_SUCCESS;
-}
-#endif

@@ -1,7 +1,7 @@
 /*
  *  Various functions to ease working through FFI
  *
- *  Copyright (C) 2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+ *  Copyright (C) 2022-2024 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  *
  *  Authors: Scott Hutton
  *
@@ -38,7 +38,7 @@ use std::{
 ///
 /// Example (on the Rust side)
 /// ```
-/// use frs_error::{frs_result, FFIError};
+/// use ffi_util::{ffi_result, FFIError};
 /// use num_traits::CheckedDiv;
 ///
 /// pub fn checked_div<T>(numerator: T, denominator: T) -> Result<T, MyError>
@@ -150,7 +150,7 @@ macro_rules! rrf_call {
 ///    // ...
 ///
 ///    // Finally return
-///    frs_result!(result_in = div_result, out = out, err = err)
+///    ffi_result!(result_in = div_result, out = out, err = err)
 /// }
 /// ```
 ///
@@ -288,6 +288,13 @@ mod tests {
 ///    let blah = validate_str_param!(blah);
 /// # }
 /// ```
+/// ```edition2018
+/// use util::validate_str_param;
+///
+/// # pub extern "C" fn _my_c_interface(blah: *const c_char) -> sys::cl_error_t {
+///    let blah = validate_str_param!(blah, err = err);
+/// # }
+/// ```
 #[macro_export]
 macro_rules! validate_str_param {
     ($ptr:ident) => {
@@ -299,6 +306,27 @@ macro_rules! validate_str_param {
             match unsafe { CStr::from_ptr($ptr) }.to_str() {
                 Err(e) => {
                     warn!("{} is not valid unicode: {}", stringify!($ptr), e);
+                    return false;
+                }
+                Ok(s) => s,
+            }
+        }
+    };
+
+    ($ptr:ident, err=$err:ident) => {
+        if $err.is_null() {
+            warn!("{} is NULL", stringify!($err));
+            return false;
+        } else if $ptr.is_null() {
+            warn!("{} is NULL", stringify!($ptr));
+            return false;
+        } else {
+            #[allow(unused_unsafe)]
+            match unsafe { CStr::from_ptr($ptr) }.to_str() {
+                Err(e) => {
+                    warn!("{} is not valid unicode: {}", stringify!($ptr), e);
+
+                    *$err = Box::into_raw(Box::new(e.into()));
                     return false;
                 }
                 Ok(s) => s,
